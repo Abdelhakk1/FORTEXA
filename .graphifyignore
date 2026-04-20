@@ -1,0 +1,10 @@
+node_modules/
+.next/
+.git/
+awesome-design-md-main/
+public/
+*.ico
+*.png
+*.jpg
+*.svg
+package-lock.json
