@@ -28,8 +28,14 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className={`${ibmPlexSans.variable} ${ibmPlexMono.variable} h-full antialiased`} suppressHydrationWarning>
-      <body className="min-h-full flex flex-col font-sans">
+      <body className="min-h-full flex flex-col bg-[#F8F9FA] font-sans text-[#1A1A2E] dark:bg-[#09090b] dark:text-[#fafafa]">
         <ThemeProvider>
+          <a
+            href="#main-content"
+            className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-[100] focus:rounded-md focus:bg-[#0C5CAB] focus:px-3 focus:py-2 focus:text-sm focus:font-medium focus:text-white"
+          >
+            Skip to main content
+          </a>
           <TooltipProvider>{children}</TooltipProvider>
         </ThemeProvider>
       </body>

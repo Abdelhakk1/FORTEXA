@@ -11,7 +11,7 @@ export type ExploitMaturity = "Active in Wild (KEV)" | "POC Available" | "Theore
 export interface Asset {
   id: string;
   name: string;
-  type: "ATM" | "GAB" | "Kiosk" | "Server" | "Network Device";
+  type: "ATM" | "GAB" | "Kiosk" | "Server" | "Network Device" | "Workstation" | "Other";
   model: string;
   manufacturer: string;
   branch: string;
@@ -121,7 +121,7 @@ export interface Alert {
   title: string;
   description: string;
   severity: Severity;
-  type: "Critical Risk" | "Exposed ATM" | "Overdue Remediation" | "New Critical CVE" | "Policy Violation" | "SLA Breach";
+  type: "Critical Risk" | "Exposed ATM" | "Overdue Remediation" | "New Critical CVE" | "Policy Violation" | "SLA Breach" | "Import Error";
   relatedAsset: string;
   relatedCve: string;
   createdAt: string;

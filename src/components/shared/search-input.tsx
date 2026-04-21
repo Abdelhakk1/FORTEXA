@@ -19,7 +19,7 @@ export function SearchInput({ placeholder = "Search...", value, onChange, classN
         placeholder={placeholder}
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="pl-9 h-9 bg-[#F9FAFB] dark:bg-[#1a1a22] border-[#E9ECEF] dark:border-[#27272a] text-sm text-[#1A1A2E] dark:text-[#fafafa] placeholder:text-[#9CA3AF] dark:placeholder:text-[#64748B] focus:bg-white dark:focus:bg-[#141419]"
+        className="pl-9 h-9 bg-[#F9FAFB] dark:bg-[#1a1a22] border-[#E9ECEF] dark:border-[#27272a] text-sm text-[#1A1A2E] dark:text-[#fafafa] placeholder:text-[#9CA3AF] dark:placeholder:text-[#64748B] focus:bg-white dark:border-[#27272a] dark:bg-[#0f0f13] dark:focus:bg-[#141419]"
       />
     </div>
   );
