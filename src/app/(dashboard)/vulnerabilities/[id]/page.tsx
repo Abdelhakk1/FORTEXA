@@ -32,8 +32,8 @@ export default function CveDetailPage({ params }: { params: Promise<{ id: string
         title=""
         actions={
           <div className="flex gap-2">
-            <Button variant="outline" className="cursor-pointer border-[#E9ECEF] bg-[#F9FAFB] text-[#6B7280] hover:bg-[#F0FDF4]"><Share2 className="h-4 w-4 mr-2" /> Share</Button>
-            <Button className="gradient-accent text-[#1A1A2E] cursor-pointer"><Wrench className="h-4 w-4 mr-2" /> Create Remediation Task</Button>
+            <Button variant="outline" className="cursor-pointer border-[#E9ECEF] bg-[#F9FAFB] text-[#6B7280] hover:bg-[#F0FDF4] dark:border-[#27272a] dark:bg-[#1a1a22] dark:text-[#94A3B8] dark:hover:bg-[#141419]"><Share2 className="h-4 w-4 mr-2" /> Share</Button>
+            <Button className="gradient-accent text-[#1A1A2E] cursor-pointer dark:text-[#1A1A2E] dark:text-[#fafafa]"><Wrench className="h-4 w-4 mr-2" /> Create Remediation Task</Button>
           </div>
         }
       />
@@ -41,41 +41,41 @@ export default function CveDetailPage({ params }: { params: Promise<{ id: string
       {/* CVE Header */}
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 mb-6">
         <div className="lg:col-span-3">
-          <Card className="p-6 border border-[#E9ECEF] bg-white">
+          <Card className="p-6 border border-[#E9ECEF] bg-white dark:border-[#27272a] dark:bg-[#0f0f13]">
             <div className="flex flex-wrap items-center gap-3 mb-4">
-              <h1 className="text-2xl font-bold tracking-tight text-[#1A1A2E] heading-tight">{vuln.cveId}</h1>
+              <h1 className="text-2xl font-bold tracking-tight text-[#1A1A2E] heading-tight dark:text-[#fafafa]">{vuln.cveId}</h1>
               <SeverityBadge severity={vuln.severity} />
               <PriorityBadge priority={vuln.businessPriority} />
             </div>
-            <h2 className="text-lg font-medium text-[#1A1A2E] mb-3">{vuln.title}</h2>
-            <p className="text-sm text-[#6B7280] leading-relaxed mb-6">{vuln.description}</p>
+            <h2 className="text-lg font-medium text-[#1A1A2E] mb-3 dark:text-[#fafafa]">{vuln.title}</h2>
+            <p className="text-sm text-[#6B7280] leading-relaxed mb-6 dark:text-[#94A3B8]">{vuln.description}</p>
 
             <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
               <div className="flex items-start gap-2">
-                <AlertTriangle className="h-4 w-4 text-[#6B7280] mt-0.5 shrink-0" />
+                <AlertTriangle className="h-4 w-4 text-[#6B7280] mt-0.5 shrink-0 dark:text-[#64748B]" />
                 <div>
-                  <p className="text-xs text-[#6B7280]">Exploit Maturity</p>
+                  <p className="text-xs text-[#6B7280] dark:text-[#64748B]">Exploit Maturity</p>
                   <div className="mt-0.5"><KevBadge maturity={vuln.exploitMaturity} /></div>
                 </div>
               </div>
               <div className="flex items-start gap-2">
-                <Monitor className="h-4 w-4 text-[#6B7280] mt-0.5 shrink-0" />
+                <Monitor className="h-4 w-4 text-[#6B7280] mt-0.5 shrink-0 dark:text-[#64748B]" />
                 <div>
-                  <p className="text-xs text-[#6B7280]">Impacted ATMs</p>
-                  <p className="text-sm font-semibold text-[#1A1A2E]">{vuln.affectedAssetsCount}</p>
+                  <p className="text-xs text-[#6B7280] dark:text-[#64748B]">Impacted ATMs</p>
+                  <p className="text-sm font-semibold text-[#1A1A2E] dark:text-[#fafafa]">{vuln.affectedAssetsCount}</p>
                 </div>
               </div>
               <div className="flex items-start gap-2">
-                <Calendar className="h-4 w-4 text-[#6B7280] mt-0.5 shrink-0" />
+                <Calendar className="h-4 w-4 text-[#6B7280] mt-0.5 shrink-0 dark:text-[#64748B]" />
                 <div>
-                  <p className="text-xs text-[#6B7280]">First Discovered</p>
-                  <p className="text-sm font-medium text-[#1A1A2E]">{vuln.firstSeen}</p>
+                  <p className="text-xs text-[#6B7280] dark:text-[#64748B]">First Discovered</p>
+                  <p className="text-sm font-medium text-[#1A1A2E] dark:text-[#fafafa]">{vuln.firstSeen}</p>
                 </div>
               </div>
               <div className="flex items-start gap-2">
-                <Clock className="h-4 w-4 text-[#6B7280] mt-0.5 shrink-0" />
+                <Clock className="h-4 w-4 text-[#6B7280] mt-0.5 shrink-0 dark:text-[#64748B]" />
                 <div>
-                  <p className="text-xs text-[#6B7280]">SLA Deadline</p>
+                  <p className="text-xs text-[#6B7280] dark:text-[#64748B]">SLA Deadline</p>
                   <SlaBadge status={vuln.slaStatus} detail={vuln.slaStatus === "Overdue" ? "2 Days" : vuln.slaStatus === "At Risk" ? "Tomorrow" : "14 days"} />
                 </div>
               </div>
@@ -84,14 +84,14 @@ export default function CveDetailPage({ params }: { params: Promise<{ id: string
         </div>
 
         {/* CVSS Score Card */}
-        <Card className="p-6 border border-[#E9ECEF] bg-white flex flex-col items-center justify-center text-center">
-          <p className="text-xs font-semibold text-[#6B7280] uppercase tracking-wider mb-2">CVSS V3.1 Base Score</p>
-          <p className={`text-5xl font-bold ${vuln.cvssScore >= 9 ? "text-red-600" : vuln.cvssScore >= 7 ? "text-orange-600" : "text-amber-600"}`}>
+        <Card className="p-6 border border-[#E9ECEF] bg-white flex flex-col items-center justify-center text-center dark:border-[#27272a] dark:bg-[#0f0f13]">
+          <p className="text-xs font-semibold text-[#6B7280] uppercase tracking-wider mb-2 dark:text-[#64748B]">CVSS V3.1 Base Score</p>
+          <p className={`text-5xl font-bold ${vuln.cvssScore >= 9 ? "text-red-600 dark:text-red-400" : vuln.cvssScore >= 7 ? "text-orange-600 dark:text-orange-500" : "text-amber-600 dark:text-amber-400"}`}>
             {vuln.cvssScore}
           </p>
-          <p className="text-xs text-[#6B7280] mt-1">/10</p>
-          <div className="mt-4 px-3 py-2 rounded-lg bg-[#F9FAFB] border border-[#E9ECEF] w-full">
-            <p className="text-xs font-mono text-[#6B7280] break-all">{vuln.cvssVector}</p>
+          <p className="text-xs text-[#6B7280] mt-1 dark:text-[#64748B]">/10</p>
+          <div className="mt-4 px-3 py-2 rounded-lg bg-[#F9FAFB] border border-[#E9ECEF] w-full dark:border-[#27272a] dark:bg-[#1a1a22]">
+            <p className="text-xs font-mono text-[#6B7280] break-all dark:text-[#94A3B8]">{vuln.cvssVector}</p>
           </div>
         </Card>
       </div>
@@ -100,14 +100,14 @@ export default function CveDetailPage({ params }: { params: Promise<{ id: string
         {/* Left Column */}
         <div className="lg:col-span-2 space-y-6">
           {/* AI Remediation Strategy */}
-          <Card className="p-6 border border-[#E9ECEF] bg-white">
+          <Card className="p-6 border border-[#E9ECEF] bg-white dark:border-[#27272a] dark:bg-[#0f0f13]">
             <div className="flex items-center gap-3 mb-4">
               <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-purple-500/12 text-purple-400">
                 <Sparkles className="h-5 w-5" />
               </div>
               <div>
-                <h3 className="text-sm font-semibold text-[#1A1A2E]">AI-Recommended Remediation Strategy</h3>
-                <p className="text-xs text-[#6B7280]">Generated based on ATM environment context and trusted sources.</p>
+                <h3 className="text-sm font-semibold text-[#1A1A2E] dark:text-[#fafafa]">AI-Recommended Remediation Strategy</h3>
+                <p className="text-xs text-[#6B7280] dark:text-[#64748B]">Generated based on ATM environment context and trusted sources.</p>
               </div>
             </div>
 
@@ -115,15 +115,15 @@ export default function CveDetailPage({ params }: { params: Promise<{ id: string
             <div className="mb-6">
               <div className="flex items-center gap-2 mb-3">
                 <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-                <h4 className="text-sm font-semibold text-[#1A1A2E]">Primary Mitigation (Recommended)</h4>
+                <h4 className="text-sm font-semibold text-[#1A1A2E] dark:text-[#fafafa]">Primary Mitigation (Recommended)</h4>
               </div>
               <div className="border-l-3 border-coral pl-4 py-2">
-                <p className="text-sm text-[#1A1A2E] leading-relaxed">{vuln.primaryRemediation}</p>
+                <p className="text-sm text-[#1A1A2E] leading-relaxed dark:text-[#fafafa]">{vuln.primaryRemediation}</p>
               </div>
               {vuln.cveId === "CVE-2021-34527" && (
-                <div className="mt-3 bg-[#F9FAFB] rounded-lg p-4 border border-[#E9ECEF]">
-                  <p className="text-xs font-semibold text-[#6B7280] mb-2"># Automated SCCM Deployment Package:</p>
-                  <pre className="text-xs font-mono text-[#1B4332] whitespace-pre-wrap">
+                <div className="mt-3 bg-[#F9FAFB] rounded-lg p-4 border border-[#E9ECEF] dark:border-[#27272a] dark:bg-[#1a1a22]">
+                  <p className="text-xs font-semibold text-[#6B7280] mb-2 dark:text-[#64748B]"># Automated SCCM Deployment Package:</p>
+                  <pre className="text-xs font-mono text-[#1B4332] whitespace-pre-wrap dark:text-[#6ee7b7]">
 {`Deploy-Update -KB "KB5004945" -TargetCollection "ATM-Win10-Fleet" -ForceReboot $true`}
                   </pre>
                 </div>
@@ -135,19 +135,19 @@ export default function CveDetailPage({ params }: { params: Promise<{ id: string
               <div>
                 <div className="flex items-center gap-2 mb-3">
                   <Shield className="h-4 w-4 text-amber-600" />
-                  <h4 className="text-sm font-semibold text-[#1A1A2E]">Compensating Controls (If patch cannot be applied)</h4>
+                  <h4 className="text-sm font-semibold text-[#1A1A2E] dark:text-[#fafafa]">Compensating Controls (If patch cannot be applied)</h4>
                 </div>
                 <div className="space-y-4">
                   {vuln.compensatingControls.map((control, i) => (
                     <div key={i}>
                       <div className="flex items-start gap-2">
-                        <span className="flex h-5 w-5 items-center justify-center rounded-full bg-[#F3F4F6] text-xs font-semibold text-[#6B7280] shrink-0 mt-0.5">{i + 1}</span>
+                        <span className="flex h-5 w-5 items-center justify-center rounded-full bg-[#F3F4F6] text-xs font-semibold text-[#6B7280] shrink-0 mt-0.5 dark:bg-[#27272a] dark:text-[#94A3B8]">{i + 1}</span>
                         <div className="flex-1">
-                          <p className="text-sm font-semibold text-[#1A1A2E]">{control.title}</p>
-                          <p className="text-sm text-[#6B7280] mt-0.5">{control.description}</p>
+                          <p className="text-sm font-semibold text-[#1A1A2E] dark:text-[#fafafa]">{control.title}</p>
+                          <p className="text-sm text-[#6B7280] mt-0.5 dark:text-[#94A3B8]">{control.description}</p>
                           {control.command && (
-                            <div className="mt-2 bg-[#F9FAFB] rounded-lg p-3 border border-[#E9ECEF]">
-                              <pre className="text-xs font-mono text-[#1B4332] whitespace-pre-wrap">{control.command}</pre>
+                            <div className="mt-2 bg-[#F9FAFB] rounded-lg p-3 border border-[#E9ECEF] dark:border-[#27272a] dark:bg-[#1a1a22]">
+                              <pre className="text-xs font-mono text-[#1B4332] whitespace-pre-wrap dark:text-[#6ee7b7]">{control.command}</pre>
                             </div>
                           )}
                         </div>
@@ -160,50 +160,50 @@ export default function CveDetailPage({ params }: { params: Promise<{ id: string
           </Card>
 
           {/* Priority Explanation */}
-          <Card className="p-5 border border-[#E9ECEF] bg-white">
-            <h3 className="text-sm font-semibold text-[#1A1A2E] mb-3">Why This Priority?</h3>
+          <Card className="p-5 border border-[#E9ECEF] bg-white dark:border-[#27272a] dark:bg-[#0f0f13]">
+            <h3 className="text-sm font-semibold text-[#1A1A2E] mb-3 dark:text-[#fafafa]">Why This Priority?</h3>
             <div className="bg-amber-500/8 border border-amber-500/15 rounded-lg p-4">
-              <p className="text-sm text-amber-300 leading-relaxed">{vuln.contextReason}</p>
+              <p className="text-sm text-amber-700 leading-relaxed dark:text-amber-300">{vuln.contextReason}</p>
             </div>
             <div className="mt-4 flex items-center gap-2">
-              <p className="text-xs text-[#6B7280]">AI Confidence:</p>
-              <div className="flex-1 h-2 bg-[#F3F4F6] rounded-full overflow-hidden max-w-[200px]">
+              <p className="text-xs text-[#6B7280] dark:text-[#94A3B8]">AI Confidence:</p>
+              <div className="flex-1 h-2 bg-[#F3F4F6] rounded-full overflow-hidden max-w-[200px] dark:bg-[#27272a]">
                 <div className="h-full gradient-accent rounded-full" style={{ width: `${vuln.confidenceScore}%` }} />
               </div>
-              <span className="text-xs font-semibold text-[#1B4332]">{vuln.confidenceScore}%</span>
+              <span className="text-xs font-semibold text-[#1B4332] dark:text-[#6ee7b7]">{vuln.confidenceScore}%</span>
             </div>
           </Card>
 
           {/* Impacted ATM Assets */}
-          <Card className="p-5 border border-[#E9ECEF] bg-white">
+          <Card className="p-5 border border-[#E9ECEF] bg-white dark:border-[#27272a] dark:bg-[#0f0f13]">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-sm font-semibold text-[#1A1A2E]">Impacted ATM Assets ({vuln.affectedAssetsCount})</h3>
+              <h3 className="text-sm font-semibold text-[#1A1A2E] dark:text-[#fafafa]">Impacted ATM Assets ({vuln.affectedAssetsCount})</h3>
               <div className="relative w-48">
-                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-[#6B7280]" />
-                <input className="w-full pl-8 pr-3 py-1.5 text-xs border border-[#E9ECEF] rounded-lg bg-[#F3F4F6] text-[#1A1A2E] placeholder:text-[#6B7280] focus:outline-none focus:ring-2 focus:ring-coral/20 focus:border-coral" placeholder="Search assets..." />
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-[#6B7280] dark:text-[#64748B]" />
+                <input className="w-full pl-8 pr-3 py-1.5 text-xs border border-[#E9ECEF] rounded-lg bg-[#F3F4F6] text-[#1A1A2E] placeholder:text-[#6B7280] focus:outline-none focus:ring-2 focus:ring-coral/20 focus:border-coral dark:border-[#27272a] dark:bg-[#1a1a22] dark:text-[#fafafa] dark:placeholder:text-[#64748B]" placeholder="Search assets..." />
               </div>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="dark-table-head">
-                    <th className="text-left py-2 px-3 text-xs font-semibold text-[#6B7280] uppercase tracking-wider">Asset</th>
-                    <th className="text-left py-2 px-3 text-xs font-semibold text-[#6B7280] uppercase tracking-wider">Model</th>
-                    <th className="text-left py-2 px-3 text-xs font-semibold text-[#6B7280] uppercase tracking-wider">Branch</th>
-                    <th className="text-left py-2 px-3 text-xs font-semibold text-[#6B7280] uppercase tracking-wider">Exposure</th>
-                    <th className="text-center py-2 px-3 text-xs font-semibold text-[#6B7280] uppercase tracking-wider">Risk</th>
-                    <th className="text-center py-2 px-3 text-xs font-semibold text-[#6B7280] uppercase tracking-wider">Action</th>
+                  <tr className="dark-table-head border-b border-[#F3F4F6] dark:border-[#27272a]">
+                    <th className="text-left py-2 px-3 text-xs font-semibold text-[#6B7280] uppercase tracking-wider dark:text-[#64748B]">Asset</th>
+                    <th className="text-left py-2 px-3 text-xs font-semibold text-[#6B7280] uppercase tracking-wider dark:text-[#64748B]">Model</th>
+                    <th className="text-left py-2 px-3 text-xs font-semibold text-[#6B7280] uppercase tracking-wider dark:text-[#64748B]">Branch</th>
+                    <th className="text-left py-2 px-3 text-xs font-semibold text-[#6B7280] uppercase tracking-wider dark:text-[#64748B]">Exposure</th>
+                    <th className="text-center py-2 px-3 text-xs font-semibold text-[#6B7280] uppercase tracking-wider dark:text-[#64748B]">Risk</th>
+                    <th className="text-center py-2 px-3 text-xs font-semibold text-[#6B7280] uppercase tracking-wider dark:text-[#64748B]">Action</th>
                   </tr>
                 </thead>
                 <tbody>
                   {impactedAtms.map(atm => (
-                    <tr key={atm.id} className="dark-table-row">
-                      <td className="py-2.5 px-3"><Link href={`/assets/${atm.id}`} className="text-[#1B4332] font-medium hover:text-[#1B4332]-hover cursor-pointer text-sm">{atm.id}</Link></td>
-                      <td className="py-2.5 px-3 text-[#6B7280] text-sm">{atm.model}</td>
-                      <td className="py-2.5 px-3 text-sm text-[#1A1A2E]">{atm.branch}</td>
-                      <td className="py-2.5 px-3"><span className={`text-xs font-medium ${atm.exposureLevel === "Internet-Facing" ? "text-red-600" : "text-blue-600"}`}>{atm.exposureLevel}</span></td>
-                      <td className="py-2.5 px-3 text-center"><span className={`inline-flex h-7 w-7 items-center justify-center rounded text-xs font-bold text-[#1A1A2E] ${atm.riskScore >= 80 ? "bg-red-500" : atm.riskScore >= 60 ? "bg-orange-500" : "bg-amber-500"}`}>{atm.riskScore}</span></td>
-                      <td className="py-2.5 px-3 text-center"><Link href={`/assets/${atm.id}`}><Button variant="ghost" size="sm" className="h-7 w-7 p-0 cursor-pointer text-[#6B7280] hover:text-[#1A1A2E] hover:bg-[#F0FDF4]"><Eye className="h-4 w-4" /></Button></Link></td>
+                    <tr key={atm.id} className="dark-table-row border-b border-[#F3F4F6] last:border-0 dark:border-[#27272a] hover:bg-[#F9FAFB] dark:hover:bg-[#1a1a22]/50">
+                      <td className="py-2.5 px-3"><Link href={`/assets/${atm.id}`} className="text-[#1B4332] font-medium hover:text-[#1B4332]-hover cursor-pointer text-sm dark:text-[#10b981] dark:hover:text-[#6ee7b7]">{atm.id}</Link></td>
+                      <td className="py-2.5 px-3 text-[#6B7280] text-sm dark:text-[#94A3B8]">{atm.model}</td>
+                      <td className="py-2.5 px-3 text-sm text-[#1A1A2E] dark:text-[#fafafa]">{atm.branch}</td>
+                      <td className="py-2.5 px-3"><span className={`text-xs font-medium ${atm.exposureLevel === "Internet-Facing" ? "text-red-600 dark:text-red-400" : "text-blue-600 dark:text-blue-400"}`}>{atm.exposureLevel}</span></td>
+                      <td className="py-2.5 px-3 text-center"><span className={`inline-flex h-7 w-7 items-center justify-center rounded text-xs font-bold text-white ${atm.riskScore >= 80 ? "bg-red-500" : atm.riskScore >= 60 ? "bg-orange-500" : "bg-amber-500 text-[#1A1A2E] dark:text-white"}`}>{atm.riskScore}</span></td>
+                      <td className="py-2.5 px-3 text-center"><Link href={`/assets/${atm.id}`}><Button variant="ghost" size="sm" className="h-7 w-7 p-0 cursor-pointer text-[#6B7280] hover:text-[#1A1A2E] hover:bg-[#F0FDF4] dark:text-[#94A3B8] dark:hover:bg-[#1a1a22] dark:hover:text-[#fafafa]"><Eye className="h-4 w-4" /></Button></Link></td>
                     </tr>
                   ))}
                 </tbody>
@@ -215,19 +215,19 @@ export default function CveDetailPage({ params }: { params: Promise<{ id: string
         {/* Right Column */}
         <div className="space-y-6">
           {/* Trusted Intelligence Sources */}
-          <Card className="p-5 border border-[#E9ECEF] bg-white">
-            <h3 className="text-sm font-semibold text-[#1A1A2E] mb-4">Trusted Intelligence Sources</h3>
+          <Card className="p-5 border border-[#E9ECEF] bg-white dark:border-[#27272a] dark:bg-[#0f0f13]">
+            <h3 className="text-sm font-semibold text-[#1A1A2E] mb-4 dark:text-[#fafafa]">Trusted Intelligence Sources</h3>
             <div className="space-y-3">
               {vuln.trustedSources.map((source, i) => (
-                <div key={i} className="flex items-start gap-3 p-2 rounded-lg hover:bg-[#F0FDF4] transition-colors">
-                  <div className="flex h-8 w-8 items-center justify-center rounded bg-[#F3F4F6] text-[#6B7280] shrink-0">
+                <div key={i} className="flex items-start gap-3 p-2 rounded-lg hover:bg-[#F0FDF4] transition-colors dark:hover:bg-[#1a1a22]">
+                  <div className="flex h-8 w-8 items-center justify-center rounded bg-[#F3F4F6] text-[#6B7280] shrink-0 dark:bg-[#27272a] dark:text-[#94A3B8]">
                     {sourceIcons[source.icon] || <Database className="h-4 w-4" />}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <a href={source.url} target="_blank" rel="noopener noreferrer" className="text-sm font-medium text-[#1A1A2E] hover:text-[#1B4332] flex items-center gap-1 cursor-pointer">
+                    <a href={source.url} target="_blank" rel="noopener noreferrer" className="text-sm font-medium text-[#1A1A2E] hover:text-[#1B4332] flex items-center gap-1 cursor-pointer dark:text-[#fafafa] dark:hover:text-[#10b981]">
                       {source.name} <ExternalLink className="h-3 w-3" />
                     </a>
-                    <p className="text-xs text-[#6B7280]">Updated: {source.updatedAt}</p>
+                    <p className="text-xs text-[#6B7280] dark:text-[#64748B]">Updated: {source.updatedAt}</p>
                   </div>
                 </div>
               ))}
@@ -235,51 +235,51 @@ export default function CveDetailPage({ params }: { params: Promise<{ id: string
           </Card>
 
           {/* Remediation Status */}
-          <Card className="p-5 border border-[#E9ECEF] bg-white">
-            <h3 className="text-sm font-semibold text-[#1A1A2E] mb-4">Remediation Status</h3>
+          <Card className="p-5 border border-[#E9ECEF] bg-white dark:border-[#27272a] dark:bg-[#0f0f13]">
+            <h3 className="text-sm font-semibold text-[#1A1A2E] mb-4 dark:text-[#fafafa]">Remediation Status</h3>
             <div className="mb-4">
               <div className="flex items-center justify-between mb-1">
-                <p className="text-xs text-[#6B7280]">SLA Compliance</p>
-                <span className={`text-sm font-semibold ${vuln.slaStatus === "Overdue" ? "text-red-600" : vuln.slaStatus === "At Risk" ? "text-amber-600" : "text-emerald-600"}`}>
+                <p className="text-xs text-[#6B7280] dark:text-[#94A3B8]">SLA Compliance</p>
+                <span className={`text-sm font-semibold ${vuln.slaStatus === "Overdue" ? "text-red-600 dark:text-red-400" : vuln.slaStatus === "At Risk" ? "text-amber-600 dark:text-amber-400" : "text-emerald-600 dark:text-emerald-400"}`}>
                   {vuln.slaStatus === "Overdue" ? "0%" : vuln.slaStatus === "At Risk" ? "45%" : "100%"}
                 </span>
               </div>
-              <div className="h-2 bg-[#F3F4F6] rounded-full overflow-hidden">
+              <div className="h-2 bg-[#F3F4F6] rounded-full overflow-hidden dark:bg-[#27272a]">
                 <div className={`h-full rounded-full ${vuln.slaStatus === "Overdue" ? "bg-red-500 w-0" : vuln.slaStatus === "At Risk" ? "bg-amber-500 w-[45%]" : "bg-emerald-500 w-full"}`} />
               </div>
             </div>
-            <div className="p-3 rounded-lg bg-[#F9FAFB] border border-[#E9ECEF] mb-4">
-              <p className="text-sm text-[#6B7280]">
+            <div className="p-3 rounded-lg bg-[#F9FAFB] border border-[#E9ECEF] mb-4 dark:border-[#27272a] dark:bg-[#1a1a22]">
+              <p className="text-sm text-[#6B7280] dark:text-[#94A3B8]">
                 {vuln.slaStatus === "Overdue"
                   ? "No active remediation task. Create a task to assign this vulnerability to the IT Ops team for patching."
                   : "Remediation in progress. Track the task for details."}
               </p>
             </div>
-            <Button className="w-full gradient-accent text-[#1A1A2E] cursor-pointer">
+            <Button className="w-full gradient-accent text-[#1A1A2E] cursor-pointer dark:text-[#1A1A2E] dark:text-[#fafafa]">
               <Wrench className="h-4 w-4 mr-2" /> Create Remediation Task
             </Button>
           </Card>
 
           {/* Affected Products */}
-          <Card className="p-5 border border-[#E9ECEF] bg-white">
-            <h3 className="text-sm font-semibold text-[#1A1A2E] mb-3">Affected Products</h3>
+          <Card className="p-5 border border-[#E9ECEF] bg-white dark:border-[#27272a] dark:bg-[#0f0f13]">
+            <h3 className="text-sm font-semibold text-[#1A1A2E] mb-3 dark:text-[#fafafa]">Affected Products</h3>
             <div className="space-y-2">
               {vuln.affectedProducts.map((product, i) => (
                 <div key={i} className="flex items-center gap-2 text-sm">
-                  <div className="h-1.5 w-1.5 rounded-full bg-[#1B4332] shrink-0" />
-                  <span className="text-[#1A1A2E]">{product}</span>
+                  <div className="h-1.5 w-1.5 rounded-full bg-[#1B4332] shrink-0 dark:bg-[#6ee7b7]" />
+                  <span className="text-[#1A1A2E] dark:text-[#fafafa]">{product}</span>
                 </div>
               ))}
             </div>
           </Card>
 
           {/* Impact Analysis */}
-          <Card className="p-5 border border-[#E9ECEF] bg-white">
-            <h3 className="text-sm font-semibold text-[#1A1A2E] mb-3">Impact Analysis</h3>
-            <p className="text-sm text-[#6B7280] leading-relaxed">{vuln.impactAnalysis}</p>
-            <Separator className="my-3 bg-[#F3F4F6]" />
-            <h4 className="text-xs font-semibold text-[#6B7280] uppercase tracking-wider mb-2">Exploit Conditions</h4>
-            <p className="text-sm text-[#6B7280] leading-relaxed">{vuln.exploitConditions}</p>
+          <Card className="p-5 border border-[#E9ECEF] bg-white dark:border-[#27272a] dark:bg-[#0f0f13]">
+            <h3 className="text-sm font-semibold text-[#1A1A2E] mb-3 dark:text-[#fafafa]">Impact Analysis</h3>
+            <p className="text-sm text-[#6B7280] leading-relaxed dark:text-[#94A3B8]">{vuln.impactAnalysis}</p>
+            <Separator className="my-3 bg-[#F3F4F6] dark:bg-[#27272a]" />
+            <h4 className="text-xs font-semibold text-[#6B7280] uppercase tracking-wider mb-2 dark:text-[#64748B]">Exploit Conditions</h4>
+            <p className="text-sm text-[#6B7280] leading-relaxed dark:text-[#94A3B8]">{vuln.exploitConditions}</p>
           </Card>
         </div>
       </div>

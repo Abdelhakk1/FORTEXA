@@ -6,10 +6,10 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { PageHeader } from "@/components/shared/page-header";
-import { StatusBadge, ScannerBadge, SeverityBadge } from "@/components/shared/badges";
+import { StatusBadge } from "@/components/shared/badges";
 import { EChart } from "@/components/shared/echart";
 import { scanImports } from "@/lib/mock-data";
-import { CheckCircle2, XCircle, AlertTriangle, ArrowRight, Server, Bug, Link2, Download, Clock, FileText } from "lucide-react";
+import { CheckCircle2, XCircle, AlertTriangle, ArrowRight, Server, Bug, Link2, Download, FileText } from "lucide-react";
 
 export default function ImportDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -45,8 +45,8 @@ export default function ImportDetailPage({ params }: { params: Promise<{ id: str
         breadcrumbs={[{ label: "Scan Import", href: "/scan-import" }, { label: imp.id }]}
         actions={
           <div className="flex gap-2">
-            <Button variant="outline" className="cursor-pointer border-[#E9ECEF] bg-[#F9FAFB] text-[#6B7280] hover:bg-[#F0FDF4]"><Download className="h-4 w-4 mr-2" /> Download Normalized</Button>
-            <Button className="gradient-accent text-[#1A1A2E] cursor-pointer" asChild>
+            <Button variant="outline" className="cursor-pointer border-[#E9ECEF] dark:border-[#27272a] bg-[#F9FAFB] dark:bg-[#1a1a22] text-[#6B7280] dark:text-[#94A3B8] hover:bg-[#F0FDF4] dark:hover:bg-[#1a1a22]"><Download className="h-4 w-4 mr-2" /> Download Normalized</Button>
+            <Button className="gradient-accent text-[#1A1A2E] dark:text-[#fafafa] cursor-pointer" asChild>
               <Link href="/vulnerabilities">View Vulnerabilities <ArrowRight className="h-4 w-4 ml-2" /></Link>
             </Button>
           </div>
@@ -61,14 +61,14 @@ export default function ImportDetailPage({ params }: { params: Promise<{ id: str
           { label: "CVEs Linked", value: imp.cvesLinked, icon: Link2, color: "text-purple-400 bg-purple-500/12" },
           { label: "New Assets", value: imp.newAssets, icon: Server, color: "text-emerald-600 bg-emerald-500/12" },
           { label: "New Vulns", value: imp.newVulnerabilities, icon: Bug, color: "text-amber-600 bg-amber-500/12" },
-          { label: "Errors", value: imp.errors, icon: XCircle, color: imp.errors > 0 ? "text-red-600 bg-red-500/12" : "text-[#6B7280] bg-[#F3F4F6]" },
+          { label: "Errors", value: imp.errors, icon: XCircle, color: imp.errors > 0 ? "text-red-600 bg-red-500/12" : "text-[#6B7280] dark:text-[#94A3B8] bg-[#F3F4F6] dark:bg-[#27272a]" },
         ].map(card => (
-          <Card key={card.label} className="p-4 border border-[#E9ECEF] bg-white text-center">
+          <Card key={card.label} className="p-4 border border-[#E9ECEF] bg-white dark:border-[#27272a] dark:bg-[#0f0f13] text-center">
             <div className={`mx-auto mb-2 flex h-9 w-9 items-center justify-center rounded-lg ${card.color}`}>
               <card.icon className="h-4 w-4" />
             </div>
-            <p className="text-xl font-bold text-[#1A1A2E]">{card.value}</p>
-            <p className="text-xs text-[#6B7280]">{card.label}</p>
+            <p className="text-xl font-bold text-[#1A1A2E] dark:text-[#fafafa]">{card.value}</p>
+            <p className="text-xs text-[#6B7280] dark:text-[#94A3B8]">{card.label}</p>
           </Card>
         ))}
       </div>
@@ -77,13 +77,13 @@ export default function ImportDetailPage({ params }: { params: Promise<{ id: str
         {/* Left Column */}
         <div className="lg:col-span-2 space-y-6">
           {/* Processing Pipeline */}
-          <Card className="p-5 border border-[#E9ECEF] bg-white">
-            <h3 className="text-sm font-semibold text-[#1A1A2E] mb-6">Processing Pipeline</h3>
+          <Card className="p-5 border border-[#E9ECEF] bg-white dark:border-[#27272a] dark:bg-[#0f0f13]">
+            <h3 className="text-sm font-semibold text-[#1A1A2E] dark:text-[#fafafa] mb-6">Processing Pipeline</h3>
             <div className="space-y-4">
               {steps.map((step, i) => (
                 <div key={step.label} className="flex items-start gap-4">
                   <div className="flex flex-col items-center">
-                    <div className={`flex h-8 w-8 items-center justify-center rounded-full ${step.status === "complete" ? "bg-emerald-500/12 text-emerald-600" : step.status === "warning" ? "bg-amber-500/12 text-amber-600" : "bg-[#F3F4F6] text-[#6B7280]"}`}>
+                    <div className={`flex h-8 w-8 items-center justify-center rounded-full ${step.status === "complete" ? "bg-emerald-500/12 text-emerald-600" : step.status === "warning" ? "bg-amber-500/12 text-amber-600" : "bg-[#F3F4F6] dark:bg-[#27272a] text-[#6B7280] dark:text-[#94A3B8]"}`}>
                       {step.status === "complete" ? <CheckCircle2 className="h-4 w-4" /> : step.status === "warning" ? <AlertTriangle className="h-4 w-4" /> : <div className="h-2 w-2 rounded-full bg-[#3F3F46]" />}
                     </div>
                     {i < steps.length - 1 && (
@@ -91,8 +91,8 @@ export default function ImportDetailPage({ params }: { params: Promise<{ id: str
                     )}
                   </div>
                   <div className="flex-1 pb-2">
-                    <p className="text-sm font-medium text-[#1A1A2E]">{step.label}</p>
-                    <p className="text-xs text-[#6B7280]">{step.detail}</p>
+                    <p className="text-sm font-medium text-[#1A1A2E] dark:text-[#fafafa]">{step.label}</p>
+                    <p className="text-xs text-[#6B7280] dark:text-[#94A3B8]">{step.detail}</p>
                   </div>
                 </div>
               ))}
@@ -101,8 +101,8 @@ export default function ImportDetailPage({ params }: { params: Promise<{ id: str
 
           {/* Errors/Warnings */}
           {(imp.errors > 0 || imp.warnings > 0) && (
-            <Card className="p-5 border border-[#E9ECEF] bg-white">
-              <h3 className="text-sm font-semibold text-[#1A1A2E] mb-4">Issues ({imp.errors + imp.warnings})</h3>
+            <Card className="p-5 border border-[#E9ECEF] bg-white dark:border-[#27272a] dark:bg-[#0f0f13]">
+              <h3 className="text-sm font-semibold text-[#1A1A2E] dark:text-[#fafafa] mb-4">Issues ({imp.errors + imp.warnings})</h3>
               <div className="space-y-2">
                 {imp.errors > 0 && (
                   <div className="flex items-start gap-3 p-3 rounded-lg bg-red-500/8 border border-red-500/15">
@@ -127,18 +127,18 @@ export default function ImportDetailPage({ params }: { params: Promise<{ id: str
           )}
 
           {/* Reconciliation Workbench */}
-          <Card className="p-5 border border-[#E9ECEF] bg-white">
-            <h3 className="text-sm font-semibold text-[#1A1A2E] mb-4">Reconciliation Workbench</h3>
-            <p className="text-xs text-[#6B7280] mb-4">Assets detected in scan but not matched to existing inventory.</p>
+          <Card className="p-5 border border-[#E9ECEF] bg-white dark:border-[#27272a] dark:bg-[#0f0f13]">
+            <h3 className="text-sm font-semibold text-[#1A1A2E] dark:text-[#fafafa] mb-4">Reconciliation Workbench</h3>
+            <p className="text-xs text-[#6B7280] dark:text-[#94A3B8] mb-4">Assets detected in scan but not matched to existing inventory.</p>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="dark-table-head">
-                    <th className="text-left py-2 px-3 text-xs font-semibold text-[#6B7280] uppercase tracking-wider">Detected IP</th>
-                    <th className="text-left py-2 px-3 text-xs font-semibold text-[#6B7280] uppercase tracking-wider">Hostname</th>
-                    <th className="text-left py-2 px-3 text-xs font-semibold text-[#6B7280] uppercase tracking-wider">OS Fingerprint</th>
-                    <th className="text-left py-2 px-3 text-xs font-semibold text-[#6B7280] uppercase tracking-wider">Findings</th>
-                    <th className="text-left py-2 px-3 text-xs font-semibold text-[#6B7280] uppercase tracking-wider">Action</th>
+                  <tr className="dark-table-head border-b border-[#F3F4F6] dark:border-[#27272a]">
+                    <th className="text-left py-2 px-3 text-xs font-semibold text-[#6B7280] dark:text-[#94A3B8] uppercase tracking-wider">Detected IP</th>
+                    <th className="text-left py-2 px-3 text-xs font-semibold text-[#6B7280] dark:text-[#94A3B8] uppercase tracking-wider">Hostname</th>
+                    <th className="text-left py-2 px-3 text-xs font-semibold text-[#6B7280] dark:text-[#94A3B8] uppercase tracking-wider">OS Fingerprint</th>
+                    <th className="text-left py-2 px-3 text-xs font-semibold text-[#6B7280] dark:text-[#94A3B8] uppercase tracking-wider">Findings</th>
+                    <th className="text-left py-2 px-3 text-xs font-semibold text-[#6B7280] dark:text-[#94A3B8] uppercase tracking-wider">Action</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -146,13 +146,13 @@ export default function ImportDetailPage({ params }: { params: Promise<{ id: str
                     { ip: "10.7.1.22", hostname: "ATM-UNKNOWN-01", os: "Windows 10 IoT", findings: 4 },
                     { ip: "10.7.1.23", hostname: "ATM-UNKNOWN-02", os: "Windows 10 IoT", findings: 7 },
                   ].map(row => (
-                    <tr key={row.ip} className="dark-table-row">
-                      <td className="py-2.5 px-3 font-mono text-xs text-[#6B7280]">{row.ip}</td>
-                      <td className="py-2.5 px-3 text-sm text-[#1A1A2E]">{row.hostname}</td>
-                      <td className="py-2.5 px-3 text-xs text-[#6B7280]">{row.os}</td>
-                      <td className="py-2.5 px-3 text-center font-medium text-[#1A1A2E]">{row.findings}</td>
+                    <tr key={row.ip} className="dark-table-row border-b border-[#F3F4F6] last:border-0 dark:border-[#27272a] hover:bg-[#F9FAFB] dark:hover:bg-[#1a1a22]/50">
+                      <td className="py-2.5 px-3 font-mono text-xs text-[#6B7280] dark:text-[#94A3B8]">{row.ip}</td>
+                      <td className="py-2.5 px-3 text-sm text-[#1A1A2E] dark:text-[#fafafa]">{row.hostname}</td>
+                      <td className="py-2.5 px-3 text-xs text-[#6B7280] dark:text-[#94A3B8]">{row.os}</td>
+                      <td className="py-2.5 px-3 text-center font-medium text-[#1A1A2E] dark:text-[#fafafa]">{row.findings}</td>
                       <td className="py-2.5 px-3">
-                        <Button variant="outline" size="sm" className="h-7 text-xs cursor-pointer border-[#E9ECEF] bg-[#F9FAFB] text-[#6B7280] hover:bg-[#F0FDF4]">Map to Asset</Button>
+                        <Button variant="outline" size="sm" className="h-7 text-xs cursor-pointer border-[#E9ECEF] dark:border-[#27272a] bg-[#F9FAFB] dark:bg-[#1a1a22] text-[#6B7280] dark:text-[#94A3B8] hover:bg-[#F0FDF4] dark:hover:bg-[#1a1a22]">Map to Asset</Button>
                       </td>
                     </tr>
                   ))}
@@ -162,8 +162,8 @@ export default function ImportDetailPage({ params }: { params: Promise<{ id: str
           </Card>
 
           {/* Audit Trail */}
-          <Card className="p-5 border border-[#E9ECEF] bg-white">
-            <h3 className="text-sm font-semibold text-[#1A1A2E] mb-4">Import Audit Trail</h3>
+          <Card className="p-5 border border-[#E9ECEF] bg-white dark:border-[#27272a] dark:bg-[#0f0f13]">
+            <h3 className="text-sm font-semibold text-[#1A1A2E] dark:text-[#fafafa] mb-4">Import Audit Trail</h3>
             <div className="space-y-3">
               {[
                 { time: "14:32:05", event: "Import initiated", user: imp.importedBy, level: "INFO" },
@@ -174,12 +174,12 @@ export default function ImportDetailPage({ params }: { params: Promise<{ id: str
                 { time: "14:36:37", event: "Import completed", user: "System", level: "INFO" },
               ].map((entry, i) => (
                 <div key={i} className="flex items-start gap-3 text-xs">
-                  <span className="shrink-0 font-mono text-[#6B7280] w-16">{entry.time}</span>
+                  <span className="shrink-0 font-mono text-[#6B7280] dark:text-[#94A3B8] w-16">{entry.time}</span>
                   <span className={`shrink-0 px-1.5 py-0.5 rounded font-bold ${
                     entry.level === "WARN" ? "bg-amber-500/12 text-amber-600" : "bg-blue-50 text-blue-600"
                   }`}>{entry.level}</span>
-                  <span className="text-[#1A1A2E]">{entry.event}</span>
-                  <span className="text-[#6B7280] ml-auto shrink-0">{entry.user}</span>
+                  <span className="text-[#1A1A2E] dark:text-[#fafafa]">{entry.event}</span>
+                  <span className="text-[#6B7280] dark:text-[#94A3B8] ml-auto shrink-0">{entry.user}</span>
                 </div>
               ))}
             </div>
@@ -189,8 +189,8 @@ export default function ImportDetailPage({ params }: { params: Promise<{ id: str
         {/* Right Column */}
         <div className="space-y-6">
           {/* Import Info */}
-          <Card className="p-5 border border-[#E9ECEF] bg-white">
-            <h3 className="text-sm font-semibold text-[#1A1A2E] mb-4">Import Details</h3>
+          <Card className="p-5 border border-[#E9ECEF] bg-white dark:border-[#27272a] dark:bg-[#0f0f13]">
+            <h3 className="text-sm font-semibold text-[#1A1A2E] dark:text-[#fafafa] mb-4">Import Details</h3>
             <div className="space-y-3">
               {[
                 { label: "Import ID", value: imp.id },
@@ -204,23 +204,23 @@ export default function ImportDetailPage({ params }: { params: Promise<{ id: str
               ].map(item => (
                 <div key={item.label}>
                   <div className="flex justify-between">
-                    <p className="text-xs text-[#6B7280]">{item.label}</p>
-                    <p className="text-sm font-medium text-[#1A1A2E] text-right max-w-[60%] truncate">{item.value}</p>
+                    <p className="text-xs text-[#6B7280] dark:text-[#94A3B8]">{item.label}</p>
+                    <p className="text-sm font-medium text-[#1A1A2E] dark:text-[#fafafa] text-right max-w-[60%] truncate">{item.value}</p>
                   </div>
-                  <Separator className="mt-2 bg-[#F3F4F6]" />
+                  <Separator className="mt-2 bg-[#F3F4F6] dark:bg-[#27272a]" />
                 </div>
               ))}
               <div className="flex justify-between items-center pt-1">
-                <p className="text-xs text-[#6B7280]">Status</p>
+                <p className="text-xs text-[#6B7280] dark:text-[#94A3B8]">Status</p>
                 <StatusBadge status={imp.status} />
               </div>
             </div>
           </Card>
 
           {/* Severity Distribution */}
-          <Card className="p-5 border border-[#E9ECEF] bg-white">
-            <h3 className="text-sm font-semibold text-[#1A1A2E] mb-2">Severity Distribution</h3>
-            <p className="text-xs text-[#6B7280] mb-2">Findings by severity level</p>
+          <Card className="p-5 border border-[#E9ECEF] bg-white dark:border-[#27272a] dark:bg-[#0f0f13]">
+            <h3 className="text-sm font-semibold text-[#1A1A2E] dark:text-[#fafafa] mb-2">Severity Distribution</h3>
+            <p className="text-xs text-[#6B7280] dark:text-[#94A3B8] mb-2">Findings by severity level</p>
             <EChart option={sevDistOption} height="200px" />
             <div className="grid grid-cols-2 gap-2 mt-3">
               {[
@@ -231,21 +231,21 @@ export default function ImportDetailPage({ params }: { params: Promise<{ id: str
               ].map(s => (
                 <div key={s.label} className="flex items-center gap-2 text-xs">
                   <span className={`h-2 w-2 rounded-full ${s.color}`} />
-                  <span className="text-[#6B7280]">{s.label}</span>
-                  <span className="font-semibold text-[#1A1A2E] ml-auto">{s.count}</span>
+                  <span className="text-[#6B7280] dark:text-[#94A3B8]">{s.label}</span>
+                  <span className="font-semibold text-[#1A1A2E] dark:text-[#fafafa] ml-auto">{s.count}</span>
                 </div>
               ))}
             </div>
           </Card>
 
           {/* Actions */}
-          <Card className="p-5 border border-[#E9ECEF] bg-white">
-            <h3 className="text-sm font-semibold text-[#1A1A2E] mb-4">Actions</h3>
+          <Card className="p-5 border border-[#E9ECEF] bg-white dark:border-[#27272a] dark:bg-[#0f0f13]">
+            <h3 className="text-sm font-semibold text-[#1A1A2E] dark:text-[#fafafa] mb-4">Actions</h3>
             <div className="space-y-2">
-              <Button variant="outline" className="w-full cursor-pointer justify-start border-[#E9ECEF] bg-[#F9FAFB] text-[#6B7280] hover:bg-[#F0FDF4]" asChild>
+              <Button variant="outline" className="w-full cursor-pointer justify-start border-[#E9ECEF] dark:border-[#27272a] bg-[#F9FAFB] dark:bg-[#1a1a22] text-[#6B7280] dark:text-[#94A3B8] hover:bg-[#F0FDF4] dark:hover:bg-[#1a1a22]" asChild>
                 <Link href="/remediation"><FileText className="h-4 w-4 mr-2" /> Process Remediation</Link>
               </Button>
-              <Button variant="outline" className="w-full cursor-pointer justify-start border-[#E9ECEF] bg-[#F9FAFB] text-[#6B7280] hover:bg-[#F0FDF4]">
+              <Button variant="outline" className="w-full cursor-pointer justify-start border-[#E9ECEF] dark:border-[#27272a] bg-[#F9FAFB] dark:bg-[#1a1a22] text-[#6B7280] dark:text-[#94A3B8] hover:bg-[#F0FDF4] dark:hover:bg-[#1a1a22]">
                 <Download className="h-4 w-4 mr-2" /> Export Raw Data
               </Button>
             </div>

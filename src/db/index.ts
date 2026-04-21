@@ -1,6 +1,9 @@
+import "server-only";
+
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import * as schema from "./schema";
+import { serverEnv } from "@/lib/env/server";
 
 /**
  * Database client — Drizzle ORM + postgres.js driver.
@@ -14,10 +17,25 @@ import * as schema from "./schema";
  * Use session mode (port 5432) for long-running connections (Inngest workers).
  */
 
-const connectionString = process.env.DATABASE_URL!;
+let client: ReturnType<typeof postgres> | null = null;
+let dbInstance: ReturnType<typeof drizzle> | null = null;
 
-const client = postgres(connectionString, {
-  prepare: false, // Required for Supabase transaction mode pooling
-});
+export function getDb() {
+  if (!serverEnv.databaseUrl) {
+    return null;
+  }
 
-export const db = drizzle(client, { schema });
+  if (!client) {
+    client = postgres(serverEnv.databaseUrl, {
+      prepare: false, // Required for Supabase transaction mode pooling
+    });
+  }
+
+  if (!dbInstance) {
+    dbInstance = drizzle(client, { schema });
+  }
+
+  return dbInstance;
+}
+
+export const db = getDb();
