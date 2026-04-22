@@ -177,27 +177,34 @@ export async function listRecentAlertActivity(limit = 3) {
     };
   }
 
-  const rows = await db
-    .select({
-      alert: alerts,
-      assetName: assets.name,
-      assetCode: assets.assetCode,
-      cveCode: cves.cveId,
-      ownerName: profiles.fullName,
-    })
-    .from(alerts)
-    .leftJoin(assets, eq(alerts.relatedAssetId, assets.id))
-    .leftJoin(cves, eq(alerts.relatedCveId, cves.id))
-    .leftJoin(profiles, eq(alerts.ownerId, profiles.id))
-    .orderBy(desc(alerts.createdAt))
-    .limit(limit);
+  try {
+    const rows = await db
+      .select({
+        alert: alerts,
+        assetName: assets.name,
+        assetCode: assets.assetCode,
+        cveCode: cves.cveId,
+        ownerName: profiles.fullName,
+      })
+      .from(alerts)
+      .leftJoin(assets, eq(alerts.relatedAssetId, assets.id))
+      .leftJoin(cves, eq(alerts.relatedCveId, cves.id))
+      .leftJoin(profiles, eq(alerts.ownerId, profiles.id))
+      .orderBy(desc(alerts.createdAt))
+      .limit(limit);
 
-  const countRows = await db.select().from(alerts);
+    const countRows = await db.select().from(alerts);
 
-  return {
-    unreadCount: countRows.filter((row) => row.status === "new").length,
-    alerts: rows.map(mapAlertRow),
-  };
+    return {
+      unreadCount: countRows.filter((row) => row.status === "new").length,
+      alerts: rows.map(mapAlertRow),
+    };
+  } catch {
+    return {
+      unreadCount: 0,
+      alerts: [] as AlertListItem[],
+    };
+  }
 }
 
 export async function updateAlertStatus(

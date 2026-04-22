@@ -78,6 +78,13 @@ export const enrichmentSourceEnum = pgEnum("enrichment_source", [
   "hybrid",
 ]);
 
+export const enrichmentStatusEnum = pgEnum("enrichment_status", [
+  "pending",
+  "processing",
+  "completed",
+  "failed",
+]);
+
 // ─── Scan Import ────────────────────────────────────────────────────
 
 export const importStatusEnum = pgEnum("import_status", [

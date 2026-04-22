@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { logAuditEvent } from "@/lib/audit";
 import { requirePermission } from "@/lib/auth";
 import { err, ok, toActionResult, type ActionResult } from "@/lib/errors";
+import { processScanImport } from "@/lib/services/ingestion";
 import { createScanImportRecord } from "@/lib/services/scan-imports";
 import {
   fortexaEventNames,
@@ -27,17 +28,34 @@ function buildStoragePath(fileName: string) {
 
 export async function createScanImportAction(
   formData: FormData
-): Promise<ActionResult<{ id: string }>> {
+): Promise<ActionResult<{ id: string; status: string }>> {
   try {
     const identity = await requirePermission("scan_imports.write");
     const file = formData.get("file");
     const name = String(formData.get("name") ?? "").trim();
-    const scannerSource = String(formData.get("scannerSource") ?? "other");
+    const scannerSource = String(formData.get("scannerSource") ?? "nessus");
 
     if (!(file instanceof File) || !file.size) {
       return err("validation_error", "Please choose a scan file to upload.", {
         file: ["A scan file is required."],
       });
+    }
+
+    if (!file.name.toLowerCase().endsWith(".nessus")) {
+      return err(
+        "validation_error",
+        "FORTEXA MVP imports only Nessus (.nessus) files right now.",
+        {
+          file: ["Upload a Nessus (.nessus) file."],
+        }
+      );
+    }
+
+    if (scannerSource !== "nessus") {
+      return err(
+        "validation_error",
+        "Only the Nessus importer is enabled for the MVP workflow."
+      );
     }
 
     const upload = await uploadFileToStorage({
@@ -52,13 +70,7 @@ export async function createScanImportAction(
 
     const record = await createScanImportRecord({
       name: name || file.name,
-      scannerSource:
-        scannerSource === "nessus" ||
-        scannerSource === "openvas" ||
-        scannerSource === "nmap" ||
-        scannerSource === "qualys"
-          ? scannerSource
-          : "other",
+      scannerSource: "nessus",
       fileName: upload.data.fileName,
       fileSize: upload.data.size,
       storagePath: upload.data.path,
@@ -87,10 +99,24 @@ export async function createScanImportAction(
       },
     });
 
+    const processed = await processScanImport(record.id);
+
     revalidatePath("/scan-import");
     revalidatePath("/dashboard");
+    revalidatePath("/assets");
+    revalidatePath("/vulnerabilities");
+    revalidatePath("/alerts");
+    revalidatePath("/reports");
 
-    return ok({ id: record.id });
+    if (processed.status === "failed") {
+      return err(
+        "validation_error",
+        processed.errors[0] ??
+          "The Nessus file could not be processed. Review the failed import row for details."
+      );
+    }
+
+    return ok({ id: record.id, status: processed.status });
   } catch (error) {
     return toActionResult(error);
   }

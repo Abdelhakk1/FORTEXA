@@ -65,124 +65,136 @@ export async function listRemediationTasks() {
     };
   }
 
-  const rows = await db
-    .select({
-      task: remediationTasks,
-      assignedName: profiles.fullName,
-    })
-    .from(remediationTasks)
-    .leftJoin(profiles, eq(remediationTasks.assignedTo, profiles.id))
-    .orderBy(desc(remediationTasks.updatedAt));
+  try {
+    const rows = await db
+      .select({
+        task: remediationTasks,
+        assignedName: profiles.fullName,
+      })
+      .from(remediationTasks)
+      .leftJoin(profiles, eq(remediationTasks.assignedTo, profiles.id))
+      .orderBy(desc(remediationTasks.updatedAt));
 
-  const avIds = rows
-    .map((row) => row.task.assetVulnerabilityId)
-    .filter((value): value is string => Boolean(value));
-  const bulkCveIds = rows
-    .map((row) => row.task.cveId)
-    .filter((value): value is string => Boolean(value));
+    const avIds = rows
+      .map((row) => row.task.assetVulnerabilityId)
+      .filter((value): value is string => Boolean(value));
+    const bulkCveIds = rows
+      .map((row) => row.task.cveId)
+      .filter((value): value is string => Boolean(value));
 
-  const [avRows, cveRows, bulkCounts] = await Promise.all([
-    avIds.length
-      ? db
-          .select({
-            id: assetVulnerabilities.id,
-            assetName: assets.name,
-            assetCode: assets.assetCode,
-            cveCode: cves.cveId,
-          })
-          .from(assetVulnerabilities)
-          .leftJoin(assets, eq(assetVulnerabilities.assetId, assets.id))
-          .leftJoin(cves, eq(assetVulnerabilities.cveId, cves.id))
-          .where(inArray(assetVulnerabilities.id, avIds))
-      : [],
-    bulkCveIds.length
-      ? db
-          .select({
-            id: cves.id,
-            cveCode: cves.cveId,
-          })
-          .from(cves)
-          .where(inArray(cves.id, bulkCveIds))
-      : [],
-    bulkCveIds.length
-      ? db
-          .select({
-            cveId: assetVulnerabilities.cveId,
-          })
-          .from(assetVulnerabilities)
-          .where(inArray(assetVulnerabilities.cveId, bulkCveIds))
-      : [],
-  ]);
+    const [avRows, cveRows, bulkCounts] = await Promise.all([
+      avIds.length
+        ? db
+            .select({
+              id: assetVulnerabilities.id,
+              assetName: assets.name,
+              assetCode: assets.assetCode,
+              cveCode: cves.cveId,
+            })
+            .from(assetVulnerabilities)
+            .leftJoin(assets, eq(assetVulnerabilities.assetId, assets.id))
+            .leftJoin(cves, eq(assetVulnerabilities.cveId, cves.id))
+            .where(inArray(assetVulnerabilities.id, avIds))
+        : [],
+      bulkCveIds.length
+        ? db
+            .select({
+              id: cves.id,
+              cveCode: cves.cveId,
+            })
+            .from(cves)
+            .where(inArray(cves.id, bulkCveIds))
+        : [],
+      bulkCveIds.length
+        ? db
+            .select({
+              cveId: assetVulnerabilities.cveId,
+            })
+            .from(assetVulnerabilities)
+            .where(inArray(assetVulnerabilities.cveId, bulkCveIds))
+        : [],
+    ]);
 
-  const avLookup = new Map(avRows.map((row) => [row.id, row]));
-  const cveLookup = new Map(cveRows.map((row) => [row.id, row.cveCode]));
-  const bulkCountLookup = bulkCounts.reduce<Record<string, number>>((acc, row) => {
-    acc[row.cveId] = (acc[row.cveId] ?? 0) + 1;
-    return acc;
-  }, {});
+    const avLookup = new Map(avRows.map((row) => [row.id, row]));
+    const cveLookup = new Map(cveRows.map((row) => [row.id, row.cveCode]));
+    const bulkCountLookup = bulkCounts.reduce<Record<string, number>>((acc, row) => {
+      acc[row.cveId] = (acc[row.cveId] ?? 0) + 1;
+      return acc;
+    }, {});
 
-  const tasks = rows
-    .map(({ task, assignedName }) => {
-      const avRow = task.assetVulnerabilityId
-        ? avLookup.get(task.assetVulnerabilityId)
-        : null;
-      const cveCode =
-        avRow?.cveCode ??
-        (task.cveId ? cveLookup.get(task.cveId) : null) ??
-        "—";
-      const relatedAsset =
-        avRow?.assetCode ??
-        avRow?.assetName ??
-        (cveCode !== "—" ? `${cveCode} campaign` : "Unlinked");
-      const affectedAssetsCount = task.assetVulnerabilityId
-        ? 1
-        : task.cveId
-          ? bulkCountLookup[task.cveId] ?? 0
-          : 0;
+    const tasks = rows
+      .map(({ task, assignedName }) => {
+        const avRow = task.assetVulnerabilityId
+          ? avLookup.get(task.assetVulnerabilityId)
+          : null;
+        const cveCode =
+          avRow?.cveCode ??
+          (task.cveId ? cveLookup.get(task.cveId) : null) ??
+          "—";
+        const relatedAsset =
+          avRow?.assetCode ??
+          avRow?.assetName ??
+          (cveCode !== "—" ? `${cveCode} campaign` : "Unlinked");
+        const affectedAssetsCount = task.assetVulnerabilityId
+          ? 1
+          : task.cveId
+            ? bulkCountLookup[task.cveId] ?? 0
+            : 0;
 
-      return {
-        dbId: task.id,
-        id: task.id,
-        title: task.title,
-        description: task.description ?? "",
-        relatedCve: cveCode,
-        relatedAsset,
-        assignedOwner: assignedName ?? "Unassigned",
-        assignedAvatar: getInitials(assignedName),
-        assignedToId: task.assignedTo ?? null,
-        dueDate: formatDate(task.dueDate),
-        slaStatus: toUiSlaStatus(task.slaStatus),
-        status: toUiRemediationStatus(task.status),
-        priority: toUiSeverity(task.priority),
-        businessPriority: toUiBusinessPriority(task.businessPriority),
-        affectedAssetsCount,
-        progress: task.progress,
-        notes: task.notes ?? "",
-        createdAt: formatDate(task.createdAt),
-        updatedAt: formatDate(task.updatedAt),
-        changeRequest: task.changeRequest ?? undefined,
-      } satisfies RemediationListItem;
-    })
-    .sort((left, right) => {
-      const leftRank = slaRank[left.slaStatus.toLowerCase().replace(" ", "_") as keyof typeof slaRank] ?? 0;
-      const rightRank = slaRank[right.slaStatus.toLowerCase().replace(" ", "_") as keyof typeof slaRank] ?? 0;
+        return {
+          dbId: task.id,
+          id: task.id,
+          title: task.title,
+          description: task.description ?? "",
+          relatedCve: cveCode,
+          relatedAsset,
+          assignedOwner: assignedName ?? "Unassigned",
+          assignedAvatar: getInitials(assignedName),
+          assignedToId: task.assignedTo ?? null,
+          dueDate: formatDate(task.dueDate),
+          slaStatus: toUiSlaStatus(task.slaStatus),
+          status: toUiRemediationStatus(task.status),
+          priority: toUiSeverity(task.priority),
+          businessPriority: toUiBusinessPriority(task.businessPriority),
+          affectedAssetsCount,
+          progress: task.progress,
+          notes: task.notes ?? "",
+          createdAt: formatDate(task.createdAt),
+          updatedAt: formatDate(task.updatedAt),
+          changeRequest: task.changeRequest ?? undefined,
+        } satisfies RemediationListItem;
+      })
+      .sort((left, right) => {
+        const leftRank = slaRank[left.slaStatus.toLowerCase().replace(" ", "_") as keyof typeof slaRank] ?? 0;
+        const rightRank = slaRank[right.slaStatus.toLowerCase().replace(" ", "_") as keyof typeof slaRank] ?? 0;
 
-      if (leftRank !== rightRank) {
-        return rightRank - leftRank;
-      }
+        if (leftRank !== rightRank) {
+          return rightRank - leftRank;
+        }
 
-      return left.dueDate.localeCompare(right.dueDate);
-    });
+        return left.dueDate.localeCompare(right.dueDate);
+      });
 
-  return {
-    tasks,
-    summary: {
-      openCount: tasks.filter((task) => task.status === "Open" || task.status === "Assigned").length,
-      inProgressCount: tasks.filter((task) => task.status === "In Progress").length,
-      closedCount: tasks.filter((task) => task.status === "Closed").length,
-      overdueCount: tasks.filter((task) => task.slaStatus === "Overdue").length,
-    },
-  };
+    return {
+      tasks,
+      summary: {
+        openCount: tasks.filter((task) => task.status === "Open" || task.status === "Assigned").length,
+        inProgressCount: tasks.filter((task) => task.status === "In Progress").length,
+        closedCount: tasks.filter((task) => task.status === "Closed").length,
+        overdueCount: tasks.filter((task) => task.slaStatus === "Overdue").length,
+      },
+    };
+  } catch {
+    return {
+      tasks: [] as RemediationListItem[],
+      summary: {
+        openCount: 0,
+        inProgressCount: 0,
+        closedCount: 0,
+        overdueCount: 0,
+      },
+    };
+  }
 }
 
 export async function createRemediationTask(

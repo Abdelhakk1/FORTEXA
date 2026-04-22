@@ -2,6 +2,8 @@ import "server-only";
 
 import * as Sentry from "@sentry/nextjs";
 import { inngest } from "./client";
+import { runCveEnrichment } from "@/lib/services/cve-enrichment";
+import { processScanImport } from "@/lib/services/ingestion";
 
 const scanImportRequested = inngest.createFunction(
   {
@@ -16,9 +18,25 @@ const scanImportRequested = inngest.createFunction(
       level: "info",
     });
 
+    const scanImportId =
+      typeof event.data.scanImportId === "string" ? event.data.scanImportId : null;
+
+    if (!scanImportId) {
+      return {
+        received: false,
+        kind: "scan-import",
+        reason: "missing_scan_import_id",
+      };
+    }
+
+    const result = await processScanImport(scanImportId);
+
     return {
       received: true,
       kind: "scan-import",
+      status: result.status,
+      createdAssets: result.createdAssets,
+      createdFindings: result.createdFindings,
     };
   }
 );
@@ -36,9 +54,26 @@ const cveEnrichmentRequested = inngest.createFunction(
       level: "info",
     });
 
+    const cveId = typeof event.data.cveId === "string" ? event.data.cveId : null;
+
+    if (!cveId) {
+      return {
+        received: false,
+        kind: "cve-enrichment",
+        reason: "missing_cve_id",
+      };
+    }
+
+    const result = await runCveEnrichment(cveId, {
+      force: Boolean(event.data.force),
+    });
+
     return {
       received: true,
       kind: "cve-enrichment",
+      status: result.ok ? result.data.status : "failed",
+      cveId,
+      error: result.ok ? null : result.message,
     };
   }
 );
