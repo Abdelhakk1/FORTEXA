@@ -124,37 +124,68 @@ export async function getDashboardData(): Promise<DashboardData> {
     };
   }
 
-  const [assetRows, avRows, alertRows, remediationRows, importRows] = await Promise.all([
-    db.select().from(assets),
-    db
-      .select({
-        av: assetVulnerabilities,
-        assetName: assets.name,
-        assetCode: assets.assetCode,
-        assetType: assets.type,
-        model: assets.model,
-        branch: assets.branch,
-        region: assets.regionId,
-        exposureLevel: assets.exposureLevel,
-        assetStatus: assets.status,
-        criticality: assets.criticality,
-        cveCode: cves.cveId,
-        title: cves.title,
-        description: cves.description,
-        severity: cves.severity,
-        cvssScore: cves.cvssScore,
-        cvssVector: cves.cvssVector,
-        exploitMaturity: cves.exploitMaturity,
-        patchAvailable: cves.patchAvailable,
-        affectedProducts: cves.affectedProducts,
-      })
-      .from(assetVulnerabilities)
-      .leftJoin(assets, eq(assetVulnerabilities.assetId, assets.id))
-      .leftJoin(cves, eq(assetVulnerabilities.cveId, cves.id)),
-    db.select().from(alerts),
-    db.select().from(remediationTasks),
-    db.select().from(scanImports),
-  ]);
+  let assetRows;
+  let avRows;
+  let alertRows;
+  let remediationRows;
+  let importRows;
+
+  try {
+    [assetRows, avRows, alertRows, remediationRows, importRows] = await Promise.all([
+      db.select().from(assets),
+      db
+        .select({
+          av: assetVulnerabilities,
+          assetName: assets.name,
+          assetCode: assets.assetCode,
+          assetType: assets.type,
+          model: assets.model,
+          branch: assets.branch,
+          region: assets.regionId,
+          exposureLevel: assets.exposureLevel,
+          assetStatus: assets.status,
+          criticality: assets.criticality,
+          cveCode: cves.cveId,
+          title: cves.title,
+          description: cves.description,
+          severity: cves.severity,
+          cvssScore: cves.cvssScore,
+          cvssVector: cves.cvssVector,
+          exploitMaturity: cves.exploitMaturity,
+          patchAvailable: cves.patchAvailable,
+          affectedProducts: cves.affectedProducts,
+        })
+        .from(assetVulnerabilities)
+        .leftJoin(assets, eq(assetVulnerabilities.assetId, assets.id))
+        .leftJoin(cves, eq(assetVulnerabilities.cveId, cves.id)),
+      db.select().from(alerts),
+      db.select().from(remediationTasks),
+      db.select().from(scanImports),
+    ]);
+  } catch {
+    return {
+      totals: {
+        totalAssets: 0,
+        atmGabCount: 0,
+        totalVulnerabilities: 0,
+        criticalVulnerabilities: 0,
+        openAlerts: 0,
+        overdueTasks: 0,
+      },
+      severityDistribution: [
+        { name: "Critical", value: 0, color: "#EF4444" },
+        { name: "High", value: 0, color: "#F59E0B" },
+        { name: "Medium", value: 0, color: "#3B82F6" },
+        { name: "Low", value: 0, color: "#10B981" },
+      ],
+      exposureTrend: buildEmptyTrend(monthLabels),
+      remediationTrend: buildEmptyRemediationTrend(monthLabels),
+      topRiskyAssets: [],
+      latestAlerts: [],
+      prioritizedVulnerabilities: [],
+      latestScanImports: [],
+    };
+  }
 
   const topRiskyAssets = Array.from(
     avRows.reduce<Map<string, RiskyAssetSummary>>((map, row) => {
@@ -276,6 +307,12 @@ export async function getDashboardData(): Promise<DashboardData> {
       compensatingControls: [],
       confidenceScore: 0,
       contextReason: "",
+      aiSummary: "",
+      enrichmentStatus: "Pending",
+      enrichmentError: "",
+      enrichmentModel: "",
+      aiEnrichedAt: "—",
+      aiTags: [],
     } satisfies Vulnerability;
 
     current.affectedAssetsCount += 1;

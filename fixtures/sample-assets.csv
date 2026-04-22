@@ -1,0 +1,4 @@
+asset_code,name,type,hostname,ip_address,domain,region_code,criticality,exposure_level,branch,manufacturer,model,location,status
+ATM-701,ATM Algiers Centre,atm,atm-alg-centre-01,10.10.1.15,atm-alg-centre-01.fortexa.local,CTR,critical,internal,Algiers Centre,NCR,SelfServ 82,Algiers Downtown,active
+SRV-812,ATM Switch Core,server,switch-core-01,10.0.0.15,,CTR,high,internal,Head Office,Dell,PowerEdge R750,Algiers Datacenter,active
+NET-455,Branch Edge Router,network_device,branch-edge-06,196.20.10.15,branch-edge-06.fortexa.local,EST,high,internet_facing,Constantine Branch,Cisco,ISR 4451,Constantine,active

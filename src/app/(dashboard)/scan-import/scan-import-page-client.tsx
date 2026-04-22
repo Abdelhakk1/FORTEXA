@@ -18,16 +18,6 @@ interface ScanImportPageClientProps {
   data: ScanImportPageData;
 }
 
-function guessScannerSource(fileName: string) {
-  const normalized = fileName.toLowerCase();
-
-  if (normalized.endsWith(".nessus")) return "nessus";
-  if (normalized.includes("openvas")) return "openvas";
-  if (normalized.includes("nmap")) return "nmap";
-  if (normalized.includes("qualys") || normalized.endsWith(".csv")) return "qualys";
-  return "other";
-}
-
 export function ScanImportPageClient({ data }: ScanImportPageClientProps) {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -36,6 +26,7 @@ export function ScanImportPageClient({ data }: ScanImportPageClientProps) {
     importId: string;
     fileName: string;
     scannerSource: string;
+    status: string;
   } | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
@@ -46,19 +37,21 @@ export function ScanImportPageClient({ data }: ScanImportPageClientProps) {
       const formData = new FormData();
       formData.set("file", file);
       formData.set("name", file.name);
-      formData.set("scannerSource", guessScannerSource(file.name));
+      formData.set("scannerSource", "nessus");
 
       const result = await createScanImportAction(formData);
 
       if (!result.ok) {
         setUploadError(result.message);
+        router.refresh();
         return;
       }
 
       setUploadState({
         importId: result.data.id,
         fileName: file.name,
-        scannerSource: guessScannerSource(file.name),
+        scannerSource: "nessus",
+        status: result.data.status,
       });
 
       router.refresh();
@@ -91,7 +84,7 @@ export function ScanImportPageClient({ data }: ScanImportPageClientProps) {
           ref={fileInputRef}
           type="file"
           className="hidden"
-          accept=".nessus,.xml,.csv"
+          accept=".nessus"
           onChange={(event) => {
             const file = event.target.files?.[0];
 
@@ -113,12 +106,12 @@ export function ScanImportPageClient({ data }: ScanImportPageClientProps) {
           {uploadState ? (
             <div className="space-y-3">
               <CheckCircle2 className="h-12 w-12 text-emerald-600 dark:text-emerald-400 mx-auto" />
-              <p className="text-lg font-semibold text-[#1A1A2E] dark:text-[#fafafa]">Import Queued Successfully</p>
-              <p className="text-sm text-[#6B7280] dark:text-[#94A3B8]">{uploadState.fileName} was stored and queued for asynchronous processing.</p>
+              <p className="text-lg font-semibold text-[#1A1A2E] dark:text-[#fafafa]">Import Processed Successfully</p>
+              <p className="text-sm text-[#6B7280] dark:text-[#94A3B8]">{uploadState.fileName} was stored and processed through the canonical Nessus MVP flow.</p>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4 max-w-2xl mx-auto mt-6">
                 {[
                   { value: "Stored", label: "Upload", color: "text-emerald-600 dark:text-emerald-400" },
-                  { value: "Processing", label: "Status", color: "text-[#1A1A2E] dark:text-[#fafafa]" },
+                  { value: uploadState.status === "partial" ? "Partial" : "Completed", label: "Status", color: "text-[#1A1A2E] dark:text-[#fafafa]" },
                   { value: uploadState.importId.slice(0, 8), label: "Import ID", color: "text-[#1A1A2E] dark:text-[#fafafa]" },
                   { value: uploadState.scannerSource.toUpperCase(), label: "Source", color: "text-[#1A1A2E] dark:text-[#fafafa]" },
                 ].map((stat) => (
@@ -135,17 +128,17 @@ export function ScanImportPageClient({ data }: ScanImportPageClientProps) {
           ) : isPending ? (
             <div className="space-y-4">
               <div className="mx-auto h-12 w-12 rounded-full border-4 border-blue-900 dark:border-blue-800 border-t-blue-400 animate-spin" />
-              <p className="text-lg font-semibold text-[#1A1A2E] dark:text-[#fafafa]">Uploading and Queueing Scan...</p>
-              <p className="text-sm text-[#6B7280] dark:text-[#94A3B8]">Saving the file to Supabase Storage, creating the import record, and sending the Inngest event.</p>
+              <p className="text-lg font-semibold text-[#1A1A2E] dark:text-[#fafafa]">Uploading and Processing Nessus Scan...</p>
+              <p className="text-sm text-[#6B7280] dark:text-[#94A3B8]">Saving the file, creating the import record, and running the MVP normalization pipeline.</p>
               <div className="w-full max-w-md mx-auto bg-[#F3F4F6] dark:bg-[#1a1a22] rounded-full h-2 overflow-hidden">
                 <div className="gradient-accent h-full rounded-full animate-pulse" style={{ width: "65%" }} />
               </div>
             </div>
           ) : (
-            <div className="space-y-3">
+              <div className="space-y-3">
               <Upload className={`h-12 w-12 mx-auto ${dragOver ? "text-[#0C5CAB] dark:text-[#3B82F6]" : "text-[#6B7280] dark:text-[#94A3B8]"}`} />
-              <p className="text-lg font-semibold text-[#1A1A2E] dark:text-[#fafafa]">Drag & drop scan files here</p>
-              <p className="text-sm text-[#6B7280] dark:text-[#94A3B8]">Supports Nessus (.nessus), OpenVAS (.xml), Nmap (.xml), Qualys (.csv)</p>
+              <p className="text-lg font-semibold text-[#1A1A2E] dark:text-[#fafafa]">Drop a Nessus scan here</p>
+              <p className="text-sm text-[#6B7280] dark:text-[#94A3B8]">FORTEXA MVP keeps one reliable canonical importer active: Nessus (.nessus).</p>
               <div className="flex justify-center gap-3 mt-4">
                 <Button className="gradient-accent text-white cursor-pointer" onClick={() => fileInputRef.current?.click()}>
                   <FileUp className="h-4 w-4 mr-2" /> Select File
@@ -162,12 +155,7 @@ export function ScanImportPageClient({ data }: ScanImportPageClientProps) {
         ) : null}
 
         <div className="mt-6 flex flex-wrap items-center gap-3 justify-center">
-          {[
-            { name: "Nessus", ext: ".nessus" },
-            { name: "OpenVAS", ext: ".xml" },
-            { name: "Nmap", ext: ".xml" },
-            { name: "Qualys", ext: ".csv" },
-          ].map((scanner) => (
+          {[{ name: "Nessus", ext: ".nessus" }].map((scanner) => (
             <div key={scanner.name} className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[#F9FAFB] dark:bg-[#1a1a22] border border-[#E9ECEF] dark:border-[#27272a]">
               <FileText className="h-4 w-4 text-[#6B7280] dark:text-[#94A3B8]" />
               <span className="text-sm font-medium text-[#1A1A2E] dark:text-[#fafafa]">{scanner.name}</span>
@@ -205,7 +193,7 @@ export function ScanImportPageClient({ data }: ScanImportPageClientProps) {
               </div>
             ))}
           </div>
-          <Button variant="outline" size="sm" className="mt-4 cursor-pointer w-full border-[#E9ECEF] dark:border-[#27272a] bg-[#F9FAFB] dark:bg-[#1a1a22] text-[#6B7280] dark:text-[#94A3B8] hover:bg-[#EFF6FF] dark:hover:bg-[#27272a]">Validate Mapping</Button>
+          <Button variant="outline" size="sm" className="mt-4 cursor-pointer w-full border-[#E9ECEF] dark:border-[#27272a] bg-[#F9FAFB] dark:bg-[#1a1a22] text-[#6B7280] dark:text-[#94A3B8] hover:bg-[#EFF6FF] dark:hover:bg-[#27272a]">Review Nessus Mapping</Button>
         </Card>
 
         <Card className="p-5 border border-[#E9ECEF] dark:border-[#27272a] bg-white dark:bg-[#141419]">
@@ -216,9 +204,9 @@ export function ScanImportPageClient({ data }: ScanImportPageClientProps) {
           </div>
           <div className="space-y-2">
             {[
-              { level: "INFO", message: "Background parsing is scaffolded through Inngest", detail: "The file is stored and queued, but deep normalization is a future phase." },
-              { level: "INFO", message: "Storage path is tracked on each import row", detail: "This enables later replay and artifact review." },
-              { level: "INFO", message: "Server-side validation now blocks empty uploads", detail: "The page no longer simulates fake success states." },
+              { level: "INFO", message: "Nessus is the only active MVP import path", detail: "Other scanner formats stay out of the UI until they are production-ready." },
+              { level: "INFO", message: "The upload now parses, matches, and upserts data server-side", detail: "Assets, findings, vulnerabilities, and alerts can be created from one import run." },
+              { level: "INFO", message: "Import failures now persist as failed rows instead of crashing the page", detail: "You can retry with a corrected Nessus file without losing history." },
             ].map((issue, index) => (
               <div key={index} className="flex items-start gap-3 p-2.5 rounded-lg border border-[#E9ECEF] dark:border-[#27272a] bg-[#F9FAFB] dark:bg-[#1a1a22]">
                 <span className="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-bold mt-0.5 bg-blue-500/15 text-blue-600 dark:text-blue-400">{issue.level}</span>

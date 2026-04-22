@@ -6,6 +6,7 @@ export type RemediationStatus = "Open" | "Assigned" | "In Progress" | "Mitigated
 export type AlertStatus = "New" | "Acknowledged" | "In Progress" | "Resolved" | "Dismissed";
 export type ImportStatus = "Completed" | "Processing" | "Failed" | "Partial";
 export type ExploitMaturity = "Active in Wild (KEV)" | "POC Available" | "Theoretical" | "None";
+export type EnrichmentStatus = "Pending" | "Processing" | "Completed" | "Failed";
 
 // ─── Assets ────────────────────────────────────────────────────────
 export interface Asset {
@@ -57,6 +58,12 @@ export interface Vulnerability {
   compensatingControls: CompensatingControl[];
   confidenceScore: number;
   contextReason: string;
+  aiSummary?: string;
+  enrichmentStatus?: EnrichmentStatus;
+  enrichmentError?: string;
+  enrichmentModel?: string;
+  aiEnrichedAt?: string;
+  aiTags?: string[];
 }
 
 export interface TrustedSource {

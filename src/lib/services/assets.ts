@@ -3,17 +3,34 @@ import "server-only";
 import { and, eq, inArray, ne } from "drizzle-orm";
 import { z } from "zod";
 import { getDb } from "@/db";
-import { assetVulnerabilities, assets, cves, profiles, regions } from "@/db/schema";
-import type { Asset } from "@/lib/types";
+import {
+  alerts,
+  assetVulnerabilities,
+  assets,
+  cves,
+  profiles,
+  regions,
+  remediationTasks,
+  scanFindings,
+  scanImports,
+} from "@/db/schema";
+import type { Alert, Asset, RemediationTask, Vulnerability } from "@/lib/types";
 import { AppError } from "@/lib/errors";
 import {
   formatDate,
+  toUiAlertStatus,
+  toUiAlertType,
   toUiAssetStatus,
   toUiAssetType,
   toUiBusinessPriority,
   toUiCriticality,
   toUiExposureLevel,
+  toUiRemediationStatus,
   toUiSeverity,
+  toUiSlaStatus,
+  toUiExploitMaturity,
+  toUiImportStatus,
+  toUiScannerSource,
 } from "./serializers";
 import {
   buildPaginatedResult,
@@ -68,6 +85,22 @@ export interface AssetsPageData {
     gabCount: number;
     internetFacing: number;
   };
+}
+
+export interface AssetDetailData {
+  asset: AssetListItem;
+  riskTrend: Array<{ month: string; value: number }>;
+  vulnerabilities: Vulnerability[];
+  remediationTasks: RemediationTask[];
+  scanHistory: Array<{
+    id: string;
+    name: string;
+    scannerSource: string;
+    importDate: string;
+    findingsFound: number;
+    status: string;
+  }>;
+  alerts: Alert[];
 }
 
 export const createAssetSchema = z.object({
@@ -249,78 +282,91 @@ export async function listAssets(filters: AssetListFilters = {}): Promise<Assets
     };
   }
 
-  const where = buildAssetWhere(filters);
+  try {
+    const where = buildAssetWhere(filters);
 
-  const [regionRows, summaryRows, totalRows, assetRows] = await Promise.all([
-    db.select().from(regions).orderBy(regions.name),
-    db
-      .select({
-        totalAssets: count(assets.id),
-      })
-      .from(assets),
-    db.select({ total: count(assets.id) }).from(assets).where(where),
-    db
-      .select({
-        asset: assets,
-        regionName: regions.name,
-        ownerName: profiles.fullName,
-      })
-      .from(assets)
-      .leftJoin(regions, eq(assets.regionId, regions.id))
-      .leftJoin(profiles, eq(assets.ownerId, profiles.id))
-      .where(where)
-      .orderBy(desc(assets.createdAt), assets.assetCode)
-      .limit(pagination.pageSize)
-      .offset(pagination.offset),
-  ]);
+    const [regionRows, summaryRows, totalRows, assetRows] = await Promise.all([
+      db.select().from(regions).orderBy(regions.name),
+      db
+        .select({
+          totalAssets: count(assets.id),
+        })
+        .from(assets),
+      db.select({ total: count(assets.id) }).from(assets).where(where),
+      db
+        .select({
+          asset: assets,
+          regionName: regions.name,
+          ownerName: profiles.fullName,
+        })
+        .from(assets)
+        .leftJoin(regions, eq(assets.regionId, regions.id))
+        .leftJoin(profiles, eq(assets.ownerId, profiles.id))
+        .where(where)
+        .orderBy(desc(assets.createdAt), assets.assetCode)
+        .limit(pagination.pageSize)
+        .offset(pagination.offset),
+    ]);
 
-  const assetIds = assetRows.map((row) => row.asset.id);
-  const vulnerabilityRows =
-    assetIds.length > 0
-      ? await db
-          .select({
-            assetId: assetVulnerabilities.assetId,
-            riskScore: assetVulnerabilities.riskScore,
-            businessPriority: assetVulnerabilities.businessPriority,
-            severity: cves.severity,
-          })
-          .from(assetVulnerabilities)
-          .leftJoin(cves, eq(assetVulnerabilities.cveId, cves.id))
-          .where(
-            and(
-              inArray(assetVulnerabilities.assetId, assetIds),
-              ne(assetVulnerabilities.status, "closed")
+    const assetIds = assetRows.map((row) => row.asset.id);
+    const vulnerabilityRows =
+      assetIds.length > 0
+        ? await db
+            .select({
+              assetId: assetVulnerabilities.assetId,
+              riskScore: assetVulnerabilities.riskScore,
+              businessPriority: assetVulnerabilities.businessPriority,
+              severity: cves.severity,
+            })
+            .from(assetVulnerabilities)
+            .leftJoin(cves, eq(assetVulnerabilities.cveId, cves.id))
+            .where(
+              and(
+                inArray(assetVulnerabilities.assetId, assetIds),
+                ne(assetVulnerabilities.status, "closed")
+              )
             )
-          )
-      : [];
+        : [];
 
-  const allAssets = await db
-    .select({
-      type: assets.type,
-      exposureLevel: assets.exposureLevel,
-    })
-    .from(assets);
+    const allAssets = await db
+      .select({
+        type: assets.type,
+        exposureLevel: assets.exposureLevel,
+      })
+      .from(assets);
 
-  return {
-    assets: buildPaginatedResult(
-      mapAssets(assetRows, vulnerabilityRows),
-      totalRows[0]?.total ?? 0,
-      pagination
-    ),
-    regionOptions: regionRows.map((region) => ({
-      id: region.id,
-      name: region.name,
-      code: region.code,
-    })),
-    summary: {
-      totalAssets: summaryRows[0]?.totalAssets ?? 0,
-      atmCount: allAssets.filter((asset) => asset.type === "atm").length,
-      gabCount: allAssets.filter((asset) => asset.type === "gab").length,
-      internetFacing: allAssets.filter(
-        (asset) => asset.exposureLevel === "internet_facing"
-      ).length,
-    },
-  };
+    return {
+      assets: buildPaginatedResult(
+        mapAssets(assetRows, vulnerabilityRows),
+        totalRows[0]?.total ?? 0,
+        pagination
+      ),
+      regionOptions: regionRows.map((region) => ({
+        id: region.id,
+        name: region.name,
+        code: region.code,
+      })),
+      summary: {
+        totalAssets: summaryRows[0]?.totalAssets ?? 0,
+        atmCount: allAssets.filter((asset) => asset.type === "atm").length,
+        gabCount: allAssets.filter((asset) => asset.type === "gab").length,
+        internetFacing: allAssets.filter(
+          (asset) => asset.exposureLevel === "internet_facing"
+        ).length,
+      },
+    };
+  } catch {
+    return {
+      assets: buildPaginatedResult([], 0, pagination),
+      regionOptions: [],
+      summary: {
+        totalAssets: 0,
+        atmCount: 0,
+        gabCount: 0,
+        internetFacing: 0,
+      },
+    };
+  }
 }
 
 export async function createAsset(
@@ -362,4 +408,209 @@ export async function createAsset(
     .returning();
 
   return row;
+}
+
+export async function getAssetDetail(
+  assetCode: string
+): Promise<AssetDetailData | null> {
+  const db = getDb();
+
+  if (!db) {
+    return null;
+  }
+
+  const [assetRow] = await db
+    .select({
+      asset: assets,
+      regionName: regions.name,
+      ownerName: profiles.fullName,
+    })
+    .from(assets)
+    .leftJoin(regions, eq(assets.regionId, regions.id))
+    .leftJoin(profiles, eq(assets.ownerId, profiles.id))
+    .where(eq(assets.assetCode, assetCode))
+    .limit(1);
+
+  if (!assetRow) {
+    return null;
+  }
+
+  const vulnerabilityRows = await db
+    .select({
+      av: assetVulnerabilities,
+      cve: cves,
+    })
+    .from(assetVulnerabilities)
+    .leftJoin(cves, eq(assetVulnerabilities.cveId, cves.id))
+    .where(eq(assetVulnerabilities.assetId, assetRow.asset.id))
+    .orderBy(desc(assetVulnerabilities.riskScore), desc(assetVulnerabilities.lastSeen));
+
+  const statsRows = vulnerabilityRows.map((row) => ({
+    assetId: assetRow.asset.id,
+    riskScore: row.av.riskScore,
+    businessPriority: row.av.businessPriority,
+    severity: row.cve?.severity ?? null,
+  }));
+
+  const [mappedAsset] = mapAssets([assetRow], statsRows);
+
+  const vulnerabilities = vulnerabilityRows.map(({ av, cve }) => ({
+    id: cve?.cveId ?? av.id,
+    cveId: cve?.cveId ?? "—",
+    title: cve?.title ?? "Unlinked CVE",
+    description: cve?.description ?? "",
+    severity: toUiSeverity(cve?.severity),
+    cvssScore: cve?.cvssScore ? Number(cve.cvssScore) : 0,
+    cvssVector: cve?.cvssVector ?? "—",
+    businessPriority: toUiBusinessPriority(av.businessPriority),
+    exploitMaturity: toUiExploitMaturity(cve?.exploitMaturity),
+    affectedAssetsCount: 1,
+    patchAvailable: cve?.patchAvailable ?? false,
+    aiRemediationAvailable: false,
+    status:
+      av.status === "closed"
+        ? "Closed"
+        : av.status === "mitigated"
+          ? "Mitigated"
+          : "Open",
+    firstSeen: formatDate(av.firstSeen),
+    lastSeen: formatDate(av.lastSeen),
+    slaDue: formatDate(av.slaDue),
+    slaStatus: toUiSlaStatus(av.slaStatus),
+    affectedProducts: cve?.affectedProducts ?? [],
+    impactAnalysis: "",
+    exploitConditions: "",
+    trustedSources: [],
+    primaryRemediation: "",
+    compensatingControls: [],
+    confidenceScore: 0,
+    contextReason: "",
+    aiSummary: "",
+    enrichmentStatus: "Pending",
+    enrichmentError: "",
+    enrichmentModel: "",
+    aiEnrichedAt: "—",
+    aiTags: [],
+  } satisfies Vulnerability));
+
+  const remediationRows =
+    vulnerabilityRows.length > 0
+      ? await db
+          .select({
+            task: remediationTasks,
+            assignedName: profiles.fullName,
+            cveCode: cves.cveId,
+          })
+          .from(remediationTasks)
+          .leftJoin(profiles, eq(remediationTasks.assignedTo, profiles.id))
+          .leftJoin(cves, eq(remediationTasks.cveId, cves.id))
+          .where(
+            or(
+              inArray(
+                remediationTasks.assetVulnerabilityId,
+                vulnerabilityRows.map((row) => row.av.id)
+              ),
+              inArray(
+                remediationTasks.cveId,
+                vulnerabilityRows.map((row) => row.av.cveId)
+              )
+            )!
+          )
+          .orderBy(desc(remediationTasks.updatedAt))
+          .limit(5)
+      : [];
+
+  const remediationTasksData = remediationRows.map(({ task, assignedName, cveCode }) => ({
+    id: task.id,
+    title: task.title,
+    description: task.description ?? "",
+    relatedCve: cveCode ?? "—",
+    relatedAsset: mappedAsset.id,
+    assignedOwner: assignedName ?? "Unassigned",
+    assignedAvatar: (assignedName ?? "UN").slice(0, 2).toUpperCase(),
+    dueDate: formatDate(task.dueDate),
+    slaStatus: toUiSlaStatus(task.slaStatus),
+    status: toUiRemediationStatus(task.status),
+    priority: toUiSeverity(task.priority),
+    businessPriority: toUiBusinessPriority(task.businessPriority),
+    affectedAssetsCount: task.assetVulnerabilityId ? 1 : mappedAsset.vulnerabilityCount,
+    progress: task.progress,
+    notes: task.notes ?? "",
+    createdAt: formatDate(task.createdAt),
+    updatedAt: formatDate(task.updatedAt),
+    changeRequest: task.changeRequest ?? undefined,
+  } satisfies RemediationTask));
+
+  const scanHistoryRows = await db
+    .select({
+      scanImport: scanImports,
+    })
+    .from(scanFindings)
+    .innerJoin(scanImports, eq(scanFindings.scanImportId, scanImports.id))
+    .where(eq(scanFindings.matchedAssetId, assetRow.asset.id))
+    .orderBy(desc(scanImports.importDate))
+    .limit(5);
+
+  const uniqueImports = Array.from(
+    new Map(scanHistoryRows.map((row) => [row.scanImport.id, row.scanImport])).values()
+  );
+
+  const scanHistory = uniqueImports.map((scanImport) => ({
+    id: scanImport.id,
+    name: scanImport.name,
+    scannerSource: toUiScannerSource(scanImport.scannerSource),
+    importDate: formatDate(scanImport.importDate),
+    findingsFound: scanImport.findingsFound,
+    status: toUiImportStatus(scanImport.status),
+  }));
+
+  const alertRows = await db
+    .select({
+      alert: alerts,
+      cveCode: cves.cveId,
+    })
+    .from(alerts)
+    .leftJoin(cves, eq(alerts.relatedCveId, cves.id))
+    .where(
+      vulnerabilityRows.length > 0
+        ? or(
+            eq(alerts.relatedAssetId, assetRow.asset.id),
+            inArray(
+              alerts.relatedAssetVulnerabilityId,
+              vulnerabilityRows.map((row) => row.av.id)
+            )
+          )!
+        : eq(alerts.relatedAssetId, assetRow.asset.id)
+    )
+    .orderBy(desc(alerts.createdAt))
+    .limit(5);
+
+  const alertsData = alertRows.map(({ alert, cveCode }) => ({
+    id: alert.id,
+    title: alert.title,
+    description: alert.description ?? "No alert details available.",
+    severity: toUiSeverity(alert.severity),
+    type: toUiAlertType(alert.type),
+    relatedAsset: mappedAsset.id,
+    relatedCve: cveCode ?? "N/A",
+    createdAt: formatDate(alert.createdAt),
+    owner: "Unassigned",
+    status: toUiAlertStatus(alert.status),
+  } satisfies Alert));
+
+  const riskTrend = ["Jan", "Feb", "Mar", "Apr"].map((month) => ({
+    month,
+    // We do not have historical score snapshots yet, so keep the chart honest
+    // by reflecting the current score consistently until time-series data exists.
+    value: mappedAsset.riskScore,
+  }));
+
+  return {
+    asset: mappedAsset,
+    riskTrend,
+    vulnerabilities,
+    remediationTasks: remediationTasksData,
+    scanHistory,
+    alerts: alertsData,
+  };
 }

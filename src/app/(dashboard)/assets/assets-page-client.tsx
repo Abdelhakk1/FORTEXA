@@ -1,9 +1,9 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Download, Eye, Server, Monitor, Globe, Shield } from "lucide-react";
+import { Download, Eye, Server, Monitor, Globe, Shield, Plus, Upload } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -12,6 +12,7 @@ import { SearchInput } from "@/components/shared/search-input";
 import { EmptyState } from "@/components/shared/empty-state";
 import { PaginationControls } from "@/components/shared/pagination-controls";
 import { SeverityBadge, PriorityBadge, StatusBadge } from "@/components/shared/badges";
+import { createAssetAction, importAssetsCsvAction } from "@/actions/assets";
 import { downloadCsv } from "@/lib/download";
 import type { AssetsPageData } from "@/lib/services/assets";
 
@@ -31,6 +32,30 @@ interface AssetsPageClientProps {
 export function AssetsPageClient({ data, filters }: AssetsPageClientProps) {
   const router = useRouter();
   const pathname = usePathname();
+  const csvInputRef = useRef<HTMLInputElement | null>(null);
+  const [showCreateForm, setShowCreateForm] = useState(false);
+  const [showCsvImport, setShowCsvImport] = useState(false);
+  const [formState, setFormState] = useState({
+    assetCode: "",
+    name: "",
+    type: "other",
+    regionId: "all",
+    branch: "",
+    ipAddress: "",
+    criticality: "medium",
+    exposureLevel: "internal",
+    status: "active",
+  });
+  const [formMessage, setFormMessage] = useState<string | null>(null);
+  const [csvMessage, setCsvMessage] = useState<string | null>(null);
+  const [csvSummary, setCsvSummary] = useState<{
+    totalRows: number;
+    createdAssets: number;
+    updatedAssets: number;
+    errorCount: number;
+  } | null>(null);
+  const [isCreatingAsset, startCreateAsset] = useTransition();
+  const [isImportingCsv, startImportCsv] = useTransition();
 
   const activeFilters = useMemo(
     () =>
@@ -91,17 +116,206 @@ export function AssetsPageClient({ data, filters }: AssetsPageClientProps) {
     });
   };
 
+  const submitAsset = () => {
+    startCreateAsset(async () => {
+      setFormMessage(null);
+      const result = await createAssetAction({
+        assetCode: formState.assetCode,
+        name: formState.name,
+        type: formState.type as Parameters<typeof createAssetAction>[0]["type"],
+        branch: formState.branch,
+        ipAddress: formState.ipAddress,
+        criticality: formState.criticality as Parameters<typeof createAssetAction>[0]["criticality"],
+        exposureLevel: formState.exposureLevel as Parameters<typeof createAssetAction>[0]["exposureLevel"],
+        status: formState.status as Parameters<typeof createAssetAction>[0]["status"],
+        regionId: formState.regionId === "all" ? null : formState.regionId,
+      });
+
+      if (!result.ok) {
+        setFormMessage(result.message);
+        return;
+      }
+
+      setFormState({
+        assetCode: "",
+        name: "",
+        type: "other",
+        regionId: "all",
+        branch: "",
+        ipAddress: "",
+        criticality: "medium",
+        exposureLevel: "internal",
+        status: "active",
+      });
+      setFormMessage("Asset created successfully.");
+      setShowCreateForm(false);
+      router.refresh();
+    });
+  };
+
+  const submitCsvFile = (file: File | null) => {
+    if (!file) {
+      return;
+    }
+
+    startImportCsv(async () => {
+      setCsvMessage(null);
+      setCsvSummary(null);
+      const formData = new FormData();
+      formData.set("file", file);
+      const result = await importAssetsCsvAction(formData);
+
+      if (!result.ok) {
+        setCsvMessage(result.message);
+        return;
+      }
+
+      setCsvSummary({
+        totalRows: result.data.totalRows,
+        createdAssets: result.data.createdAssets,
+        updatedAssets: result.data.updatedAssets,
+        errorCount: result.data.errors.length,
+      });
+      setCsvMessage(
+        result.data.errors.length > 0
+          ? `${result.data.errors.length} row(s) were skipped. Review the CSV and retry if needed.`
+          : "CSV asset import completed successfully."
+      );
+      setShowCsvImport(false);
+      router.refresh();
+    });
+  };
+
   return (
     <div>
       <PageHeader
         title="Asset Management"
         description={`${data.summary.totalAssets} monitored assets across ${data.regionOptions.length} regions`}
         actions={
-          <Button onClick={handleExport} className="gradient-accent border-0 text-white">
-            <Download className="mr-2 h-4 w-4" /> Export
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setShowCreateForm((current) => !current);
+                setShowCsvImport(false);
+              }}
+              className="border-[#E9ECEF] bg-white text-[#1A1A2E] dark:border-[#27272a] dark:bg-[#141419] dark:text-[#fafafa]"
+            >
+              <Plus className="mr-2 h-4 w-4" /> New Asset
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setShowCsvImport((current) => !current);
+                setShowCreateForm(false);
+              }}
+              className="border-[#E9ECEF] bg-white text-[#1A1A2E] dark:border-[#27272a] dark:bg-[#141419] dark:text-[#fafafa]"
+            >
+              <Upload className="mr-2 h-4 w-4" /> Import CSV
+            </Button>
+            <Button onClick={handleExport} className="gradient-accent border-0 text-white">
+              <Download className="mr-2 h-4 w-4" /> Export
+            </Button>
+          </div>
         }
       />
+
+      {(showCreateForm || showCsvImport || formMessage || csvMessage || csvSummary) && (
+        <Card className="mb-5 border border-[#E9ECEF] bg-white p-4 dark:border-[#27272a] dark:bg-[#141419]">
+          {showCreateForm && (
+            <div className="space-y-4">
+              <div className="grid gap-3 md:grid-cols-4">
+                <input value={formState.assetCode} onChange={(event) => setFormState((current) => ({ ...current, assetCode: event.target.value }))} placeholder="Asset code" className="h-10 rounded-lg border border-[#E9ECEF] bg-[#F9FAFB] px-3 text-sm text-[#1A1A2E] outline-none focus:border-[#93C5FD] dark:border-[#27272a] dark:bg-[#1a1a22] dark:text-[#fafafa]" />
+                <input value={formState.name} onChange={(event) => setFormState((current) => ({ ...current, name: event.target.value }))} placeholder="Asset name" className="h-10 rounded-lg border border-[#E9ECEF] bg-[#F9FAFB] px-3 text-sm text-[#1A1A2E] outline-none focus:border-[#93C5FD] dark:border-[#27272a] dark:bg-[#1a1a22] dark:text-[#fafafa]" />
+                <Select value={formState.type} onValueChange={(value) => setFormState((current) => ({ ...current, type: value || "other" }))}>
+                  <SelectTrigger className="h-10 border-[#E9ECEF] bg-[#F9FAFB] text-[#1A1A2E] dark:border-[#27272a] dark:bg-[#1a1a22] dark:text-[#fafafa]"><SelectValue placeholder="Type" /></SelectTrigger>
+                  <SelectContent className="border-[#E9ECEF] bg-white dark:border-[#27272a] dark:bg-[#141419]">
+                    {["atm", "gab", "server", "network_device", "kiosk", "workstation", "other"].map((type) => (
+                      <SelectItem key={type} value={type}>{type.replaceAll("_", " ")}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select value={formState.regionId} onValueChange={(value) => setFormState((current) => ({ ...current, regionId: value || "all" }))}>
+                  <SelectTrigger className="h-10 border-[#E9ECEF] bg-[#F9FAFB] text-[#1A1A2E] dark:border-[#27272a] dark:bg-[#1a1a22] dark:text-[#fafafa]"><SelectValue placeholder="Region" /></SelectTrigger>
+                  <SelectContent className="border-[#E9ECEF] bg-white dark:border-[#27272a] dark:bg-[#141419]">
+                    <SelectItem value="all">Unassigned</SelectItem>
+                    {data.regionOptions.map((region) => (
+                      <SelectItem key={region.id} value={region.id}>{region.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <input value={formState.branch} onChange={(event) => setFormState((current) => ({ ...current, branch: event.target.value }))} placeholder="Branch" className="h-10 rounded-lg border border-[#E9ECEF] bg-[#F9FAFB] px-3 text-sm text-[#1A1A2E] outline-none focus:border-[#93C5FD] dark:border-[#27272a] dark:bg-[#1a1a22] dark:text-[#fafafa]" />
+                <input value={formState.ipAddress} onChange={(event) => setFormState((current) => ({ ...current, ipAddress: event.target.value }))} placeholder="IP address" className="h-10 rounded-lg border border-[#E9ECEF] bg-[#F9FAFB] px-3 text-sm text-[#1A1A2E] outline-none focus:border-[#93C5FD] dark:border-[#27272a] dark:bg-[#1a1a22] dark:text-[#fafafa]" />
+                <Select value={formState.criticality} onValueChange={(value) => setFormState((current) => ({ ...current, criticality: value || "medium" }))}>
+                  <SelectTrigger className="h-10 border-[#E9ECEF] bg-[#F9FAFB] text-[#1A1A2E] dark:border-[#27272a] dark:bg-[#1a1a22] dark:text-[#fafafa]"><SelectValue placeholder="Criticality" /></SelectTrigger>
+                  <SelectContent className="border-[#E9ECEF] bg-white dark:border-[#27272a] dark:bg-[#141419]">
+                    {["critical", "high", "medium", "low"].map((value) => (
+                      <SelectItem key={value} value={value}>{value}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select value={formState.exposureLevel} onValueChange={(value) => setFormState((current) => ({ ...current, exposureLevel: value || "internal" }))}>
+                  <SelectTrigger className="h-10 border-[#E9ECEF] bg-[#F9FAFB] text-[#1A1A2E] dark:border-[#27272a] dark:bg-[#1a1a22] dark:text-[#fafafa]"><SelectValue placeholder="Exposure" /></SelectTrigger>
+                  <SelectContent className="border-[#E9ECEF] bg-white dark:border-[#27272a] dark:bg-[#141419]">
+                    <SelectItem value="internet_facing">internet facing</SelectItem>
+                    <SelectItem value="internal">internal</SelectItem>
+                    <SelectItem value="isolated">isolated</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button type="button" onClick={submitAsset} disabled={isCreatingAsset} className="gradient-accent border-0 text-white">
+                  {isCreatingAsset ? "Creating..." : "Create Asset"}
+                </Button>
+                <span className="text-xs text-[#6B7280] dark:text-[#94A3B8]">Manual creation writes to the real asset inventory and seeds report templates if this is the first asset.</span>
+              </div>
+            </div>
+          )}
+
+          {showCsvImport && (
+            <div className="space-y-3">
+              <input
+                ref={csvInputRef}
+                type="file"
+                accept=".csv"
+                className="hidden"
+                onChange={(event) => submitCsvFile(event.target.files?.[0] ?? null)}
+              />
+              <div className="rounded-xl border border-dashed border-[#D1D5DB] p-4 dark:border-[#3a3a42]">
+                <p className="text-sm font-medium text-[#1A1A2E] dark:text-[#fafafa]">CSV column contract</p>
+                <p className="mt-1 text-xs text-[#6B7280] dark:text-[#94A3B8]">Supported columns: asset_code, name, type, hostname, ip_address, domain, region_code, criticality, exposure_level, owner_email, owner_id, branch, manufacturer, model, location, os_version, status.</p>
+                <Button type="button" onClick={() => csvInputRef.current?.click()} disabled={isImportingCsv} className="mt-3 gradient-accent border-0 text-white">
+                  <Upload className="mr-2 h-4 w-4" /> {isImportingCsv ? "Importing..." : "Choose CSV"}
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {formMessage && (
+            <p className="mt-3 text-sm text-[#0C5CAB] dark:text-[#60A5FA]">{formMessage}</p>
+          )}
+          {csvMessage && (
+            <p className="mt-3 text-sm text-[#0C5CAB] dark:text-[#60A5FA]">{csvMessage}</p>
+          )}
+          {csvSummary && (
+            <div className="mt-3 grid gap-3 md:grid-cols-4">
+              {[
+                { label: "Rows", value: csvSummary.totalRows },
+                { label: "Created", value: csvSummary.createdAssets },
+                { label: "Updated", value: csvSummary.updatedAssets },
+                { label: "Errors", value: csvSummary.errorCount },
+              ].map((item) => (
+                <div key={item.label} className="rounded-lg border border-[#E9ECEF] bg-[#F9FAFB] p-3 text-center dark:border-[#27272a] dark:bg-[#1a1a22]">
+                  <p className="text-xl font-semibold text-[#1A1A2E] dark:text-[#fafafa]">{item.value}</p>
+                  <p className="text-xs text-[#6B7280] dark:text-[#94A3B8]">{item.label}</p>
+                </div>
+              ))}
+            </div>
+          )}
+        </Card>
+      )}
 
       <div className="mb-5 grid grid-cols-2 gap-4 animate-stagger md:grid-cols-4">
         <Card className="flex flex-col items-center justify-center gap-2 border border-[#E9ECEF] bg-white p-4 text-center dark:border-[#27272a] dark:bg-[#141419]">
