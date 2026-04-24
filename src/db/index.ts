@@ -28,6 +28,13 @@ export function getDb() {
   if (!client) {
     client = postgres(serverEnv.databaseUrl, {
       prepare: false, // Required for Supabase transaction mode pooling
+      connect_timeout: 8,
+      idle_timeout: 10,
+      max: 10,
+      connection: {
+        idle_in_transaction_session_timeout: 8000,
+        statement_timeout: 8000,
+      },
     });
   }
 
@@ -37,5 +44,3 @@ export function getDb() {
 
   return dbInstance;
 }
-
-export const db = getDb();

@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { IBM_Plex_Sans, IBM_Plex_Mono } from "next/font/google";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { ThemeInitScript } from "@/components/theme-init-script";
 import { ThemeProvider } from "@/components/theme-provider";
 import "./globals.css";
 
@@ -29,6 +30,7 @@ export default function RootLayout({
   return (
     <html lang="en" className={`${ibmPlexSans.variable} ${ibmPlexMono.variable} h-full antialiased`} suppressHydrationWarning>
       <body className="min-h-full flex flex-col bg-[#F8F9FA] font-sans text-[#1A1A2E] dark:bg-[#09090b] dark:text-[#fafafa]">
+        <ThemeInitScript />
         <ThemeProvider>
           <a
             href="#main-content"

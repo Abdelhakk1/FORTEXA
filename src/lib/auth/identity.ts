@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { User } from "@supabase/supabase-js";
+import { cache } from "react";
 import { eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { profiles, roles } from "@/db/schema";
@@ -44,8 +44,13 @@ export type IdentityStatus =
   | "suspended"
   | "db_unavailable";
 
+export interface VerifiedAuthUser {
+  id: string;
+  email: string | null;
+}
+
 export interface CurrentIdentity {
-  user: User | null;
+  user: VerifiedAuthUser | null;
   profile: ProfileRecord | null;
   role: RoleRecord | null;
   roleName: AppRoleName | null;
@@ -55,32 +60,40 @@ export interface CurrentIdentity {
   nextAal: string | null;
 }
 
-async function getAssuranceLevel() {
+const getAssuranceLevel = cache(async function getAssuranceLevel() {
+  return {
+    aal: null,
+    nextAal: null,
+  };
+});
+
+function readStringClaim(
+  claims: Record<string, unknown>,
+  key: string
+): string | null {
+  const value = claims[key];
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
+export const getCurrentUser = cache(async function getCurrentUser() {
   try {
     const supabase = await createSupabaseServerClient();
-    const { data } =
-      await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+    const { data, error } = await supabase.auth.getClaims();
+
+    if (error || !data?.claims?.sub) {
+      return null;
+    }
+
+    const claims = data.claims as Record<string, unknown>;
 
     return {
-      aal: data?.currentLevel ?? null,
-      nextAal: data?.nextLevel ?? null,
-    };
+      id: data.claims.sub,
+      email: readStringClaim(claims, "email"),
+    } satisfies VerifiedAuthUser;
   } catch {
-    return {
-      aal: null,
-      nextAal: null,
-    };
+    return null;
   }
-}
-
-export async function getCurrentUser() {
-  const supabase = await createSupabaseServerClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  return user ?? null;
-}
+});
 
 function mapAdminIdentityRow(row: AdminIdentityRow) {
   return {
@@ -107,7 +120,7 @@ function mapAdminIdentityRow(row: AdminIdentityRow) {
   };
 }
 
-async function getIdentityRow(userId: string) {
+const getIdentityRow = cache(async function getIdentityRow(userId: string) {
   const db = getDb();
 
   if (db) {
@@ -147,11 +160,10 @@ async function getIdentityRow(userId: string) {
   }
 
   return mapAdminIdentityRow(data);
-}
+});
 
-export async function getCurrentIdentity(): Promise<CurrentIdentity> {
+export const getCurrentIdentity = cache(async function getCurrentIdentity(): Promise<CurrentIdentity> {
   const user = await getCurrentUser();
-  const assurance = await getAssuranceLevel();
 
   if (!user) {
     return {
@@ -161,11 +173,15 @@ export async function getCurrentIdentity(): Promise<CurrentIdentity> {
       roleName: null,
       permissions: [],
       status: "anonymous",
-      ...assurance,
+      aal: null,
+      nextAal: null,
     };
   }
 
-  const identityRow = await getIdentityRow(user.id);
+  const [assurance, identityRow] = await Promise.all([
+    getAssuranceLevel(),
+    getIdentityRow(user.id),
+  ]);
 
   if (!identityRow) {
     return {
@@ -238,7 +254,7 @@ export async function getCurrentIdentity(): Promise<CurrentIdentity> {
     status: "authenticated",
     ...assurance,
   };
-}
+});
 
 export async function getCurrentProfile() {
   const identity = await getCurrentIdentity();

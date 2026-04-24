@@ -13,6 +13,7 @@ export const appPermissions = [
   "assets.read",
   "assets.write",
   "asset_vulnerabilities.read",
+  "asset_vulnerabilities.write",
   "alerts.read",
   "alerts.acknowledge",
   "alerts.resolve",
@@ -57,6 +58,7 @@ export const rolePermissions: Record<AppRoleName, readonly AppPermission[]> = {
     "assets.read",
     "assets.write",
     "asset_vulnerabilities.read",
+    "asset_vulnerabilities.write",
     "alerts.read",
     "alerts.acknowledge",
     "alerts.resolve",
@@ -73,6 +75,7 @@ export const rolePermissions: Record<AppRoleName, readonly AppPermission[]> = {
   remediation_owner: [
     "dashboard.view",
     "identity.read",
+    "asset_vulnerabilities.read",
     "alerts.read",
     "alerts.acknowledge",
     "remediation.read",

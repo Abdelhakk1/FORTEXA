@@ -60,10 +60,14 @@ export const exploitMaturityEnum = pgEnum("exploit_maturity", [
 ]);
 
 export const vulnerabilityStatusEnum = pgEnum("vulnerability_status", [
+  "new",
   "open",
   "mitigated",
   "closed",
+  "reopened",
   "accepted",
+  "false_positive",
+  "compensating_control",
 ]);
 
 export const slaStatusEnum = pgEnum("sla_status", [
@@ -84,6 +88,19 @@ export const enrichmentStatusEnum = pgEnum("enrichment_status", [
   "completed",
   "failed",
 ]);
+
+export const assetVulnerabilityEventTypeEnum = pgEnum(
+  "asset_vulnerability_event_type",
+  [
+    "introduced",
+    "unchanged",
+    "fixed",
+    "reopened",
+    "status_changed",
+    "task_linked",
+    "task_completed",
+  ]
+);
 
 // ─── Scan Import ────────────────────────────────────────────────────
 

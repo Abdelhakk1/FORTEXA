@@ -456,12 +456,12 @@ export function AssetsPageClient({ data, filters }: AssetsPageClientProps) {
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <p className="font-mono text-[11px] text-[#6B7280] dark:text-[#64748B]">{asset.id}</p>
-                    <Link href={`/assets/${asset.id}`} className="mt-1 block text-sm font-semibold text-[#1A1A2E] hover:text-[#0C5CAB] dark:text-[#fafafa] dark:hover:text-[#60A5FA]">
+                    <Link href={`/assets/${asset.id}`} prefetch={false} className="mt-1 block text-sm font-semibold text-[#1A1A2E] hover:text-[#0C5CAB] dark:text-[#fafafa] dark:hover:text-[#60A5FA]">
                       {asset.name}
                     </Link>
                     <p className="text-xs text-[#6B7280] dark:text-[#94A3B8]">{asset.model}</p>
                   </div>
-                  <Link href={`/assets/${asset.id}`}>
+                  <Link href={`/assets/${asset.id}`} prefetch={false}>
                     <Button variant="ghost" size="sm" aria-label={`Open asset ${asset.name}`} className="h-9 w-9 p-0 text-[#6B7280] hover:bg-[#EFF6FF] hover:text-[#0C5CAB] dark:text-[#94A3B8] dark:hover:bg-[#1a1a22] dark:hover:text-[#60A5FA]">
                       <Eye className="h-4 w-4" />
                     </Button>
@@ -508,7 +508,7 @@ export function AssetsPageClient({ data, filters }: AssetsPageClientProps) {
                     <tr key={asset.id} className="dark-table-row border-b border-[#F3F4F6] last:border-0 dark:border-[#27272a] hover:bg-[#F9FAFB] dark:hover:bg-[#1a1a22]/50">
                       <td className="px-4 py-3 font-mono text-xs text-[#6B7280] dark:text-[#64748B]">{asset.id}</td>
                       <td className="px-4 py-3">
-                        <Link href={`/assets/${asset.id}`} className="text-sm font-medium text-[#1A1A2E] hover:text-[#0C5CAB] dark:text-[#fafafa] dark:hover:text-[#60A5FA]">{asset.name}</Link>
+                        <Link href={`/assets/${asset.id}`} prefetch={false} className="text-sm font-medium text-[#1A1A2E] hover:text-[#0C5CAB] dark:text-[#fafafa] dark:hover:text-[#60A5FA]">{asset.name}</Link>
                         <p className="text-xs text-[#6B7280] dark:text-[#94A3B8]">{asset.model}</p>
                       </td>
                       <td className="px-4 py-3"><span className="rounded border border-[#E9ECEF] bg-[#F3F4F6] px-2 py-0.5 text-xs font-medium text-[#6B7280] dark:border-[#27272a] dark:bg-[#1a1a22] dark:text-[#94A3B8]">{asset.type}</span></td>
@@ -523,7 +523,7 @@ export function AssetsPageClient({ data, filters }: AssetsPageClientProps) {
                       <td className="px-4 py-3"><PriorityBadge priority={asset.contextualPriority} /></td>
                       <td className="px-4 py-3"><StatusBadge status={asset.status} /></td>
                       <td className="px-4 py-3">
-                        <Link href={`/assets/${asset.id}`} className="cursor-pointer">
+                        <Link href={`/assets/${asset.id}`} prefetch={false} className="cursor-pointer">
                           <Button variant="ghost" size="sm" aria-label={`Open asset ${asset.name}`} className="h-9 w-9 p-0 text-[#6B7280] hover:bg-[#EFF6FF] hover:text-[#0C5CAB] dark:text-[#94A3B8] dark:hover:bg-[#1a1a22] dark:hover:text-[#60A5FA]"><Eye className="h-4 w-4" /></Button>
                         </Link>
                       </td>

@@ -1,25 +1,25 @@
 import "server-only";
 
-import { eq } from "drizzle-orm";
-import { getDb } from "@/db";
-import { assetVulnerabilities, alerts, assets, cves, remediationTasks, scanImports } from "@/db/schema";
+import { sql } from "drizzle-orm";
 import type { Alert, Asset, Vulnerability } from "@/lib/types";
+import { getDb } from "@/db";
+import { measureServerTiming } from "@/lib/observability/timing";
 import {
   formatDate,
   toUiAlertStatus,
   toUiAlertType,
-  toUiBusinessPriority,
-  toUiCriticality,
-  toUiSeverity,
-  toUiSlaStatus,
   toUiAssetStatus,
   toUiAssetType,
+  toUiBusinessPriority,
+  toUiCriticality,
   toUiExposureLevel,
   toUiImportStatus,
   toUiScannerSource,
+  toUiSeverity,
+  toUiSlaStatus,
 } from "./serializers";
 
-interface DashboardData {
+export interface DashboardSummaryData {
   totals: {
     totalAssets: number;
     atmGabCount: number;
@@ -31,9 +31,15 @@ interface DashboardData {
   severityDistribution: Array<{ name: string; value: number; color: string }>;
   exposureTrend: Array<{ month: string; critical: number; high: number; medium: number; low: number }>;
   remediationTrend: Array<{ month: string; opened: number; closed: number; overdue: number }>;
+}
+
+export interface DashboardRiskData {
   topRiskyAssets: Asset[];
-  latestAlerts: Alert[];
   prioritizedVulnerabilities: Vulnerability[];
+}
+
+export interface DashboardActivityData {
+  latestAlerts: Alert[];
   latestScanImports: Array<{
     id: string;
     name: string;
@@ -44,37 +50,78 @@ interface DashboardData {
   }>;
 }
 
-interface RiskyAssetSummary {
+type DashboardTotalsRow = {
+  totalAssets: number;
+  atmGabCount: number;
+  totalVulnerabilities: number;
+  criticalVulnerabilities: number;
+  openAlerts: number;
+  overdueTasks: number;
+};
+
+type SeverityRow = {
+  severity: string | null;
+  total: number;
+};
+
+type RiskyAssetRow = {
   id: string;
   name: string;
-  type: Asset["type"];
-  model: string;
-  branch: string;
-  region: string;
-  exposureLevel: Asset["exposureLevel"];
-  status: Asset["status"];
-  criticality: Asset["criticality"];
+  type: string;
+  model: string | null;
+  branch: string | null;
+  region: string | null;
+  exposureLevel: string;
+  status: string;
+  criticality: string;
   vulnerabilityCount: number;
-  maxSeverity: "critical" | "high" | "medium" | "low" | "info";
-  contextualPriority: "p1" | "p2" | "p3" | "p4" | "p5";
+  maxSeverity: string;
+  contextualPriority: string;
   riskScore: number;
+};
+
+type PrioritizedVulnerabilityRow = {
+  id: string;
+  cveCode: string;
+  title: string;
+  description: string | null;
+  severity: string;
+  cvssScore: string | null;
+  cvssVector: string | null;
+  businessPriority: string;
+  affectedAssetsCount: number;
+  patchAvailable: boolean;
+  firstSeen: Date | string | null;
+  lastSeen: Date | string | null;
+  slaDue: Date | string | null;
+  slaStatus: string;
+  affectedProducts: string[] | null;
+  riskScore: number;
+};
+
+type LatestAlertRow = {
+  id: string;
+  title: string;
+  description: string | null;
+  severity: string;
+  type: string;
+  relatedAsset: string | null;
+  createdAt: Date | string | null;
+  status: string;
+};
+
+type LatestScanImportRow = {
+  id: string;
+  name: string;
+  scannerSource: string;
+  importDate: Date | string | null;
+  findingsFound: number;
+  status: string;
+};
+
+function asRows<T>(value: unknown) {
+  return value as T[];
 }
-
-const priorityRank = {
-  p1: 1,
-  p2: 2,
-  p3: 3,
-  p4: 4,
-  p5: 5,
-} as const;
-
-const severityRank = {
-  critical: 5,
-  high: 4,
-  medium: 3,
-  low: 2,
-  info: 1,
-} as const;
 
 function buildEmptyTrend(months: string[]) {
   return months.map((month) => ({
@@ -95,281 +142,345 @@ function buildEmptyRemediationTrend(months: string[]) {
   }));
 }
 
-export async function getDashboardData(): Promise<DashboardData> {
-  const db = getDb();
+function emptySummaryData(): DashboardSummaryData {
   const monthLabels = ["Nov", "Dec", "Jan", "Feb", "Mar", "Apr"];
-
-  if (!db) {
-    return {
-      totals: {
-        totalAssets: 0,
-        atmGabCount: 0,
-        totalVulnerabilities: 0,
-        criticalVulnerabilities: 0,
-        openAlerts: 0,
-        overdueTasks: 0,
-      },
-      severityDistribution: [
-        { name: "Critical", value: 0, color: "#EF4444" },
-        { name: "High", value: 0, color: "#F59E0B" },
-        { name: "Medium", value: 0, color: "#3B82F6" },
-        { name: "Low", value: 0, color: "#10B981" },
-      ],
-      exposureTrend: buildEmptyTrend(monthLabels),
-      remediationTrend: buildEmptyRemediationTrend(monthLabels),
-      topRiskyAssets: [],
-      latestAlerts: [],
-      prioritizedVulnerabilities: [],
-      latestScanImports: [],
-    };
-  }
-
-  let assetRows;
-  let avRows;
-  let alertRows;
-  let remediationRows;
-  let importRows;
-
-  try {
-    [assetRows, avRows, alertRows, remediationRows, importRows] = await Promise.all([
-      db.select().from(assets),
-      db
-        .select({
-          av: assetVulnerabilities,
-          assetName: assets.name,
-          assetCode: assets.assetCode,
-          assetType: assets.type,
-          model: assets.model,
-          branch: assets.branch,
-          region: assets.regionId,
-          exposureLevel: assets.exposureLevel,
-          assetStatus: assets.status,
-          criticality: assets.criticality,
-          cveCode: cves.cveId,
-          title: cves.title,
-          description: cves.description,
-          severity: cves.severity,
-          cvssScore: cves.cvssScore,
-          cvssVector: cves.cvssVector,
-          exploitMaturity: cves.exploitMaturity,
-          patchAvailable: cves.patchAvailable,
-          affectedProducts: cves.affectedProducts,
-        })
-        .from(assetVulnerabilities)
-        .leftJoin(assets, eq(assetVulnerabilities.assetId, assets.id))
-        .leftJoin(cves, eq(assetVulnerabilities.cveId, cves.id)),
-      db.select().from(alerts),
-      db.select().from(remediationTasks),
-      db.select().from(scanImports),
-    ]);
-  } catch {
-    return {
-      totals: {
-        totalAssets: 0,
-        atmGabCount: 0,
-        totalVulnerabilities: 0,
-        criticalVulnerabilities: 0,
-        openAlerts: 0,
-        overdueTasks: 0,
-      },
-      severityDistribution: [
-        { name: "Critical", value: 0, color: "#EF4444" },
-        { name: "High", value: 0, color: "#F59E0B" },
-        { name: "Medium", value: 0, color: "#3B82F6" },
-        { name: "Low", value: 0, color: "#10B981" },
-      ],
-      exposureTrend: buildEmptyTrend(monthLabels),
-      remediationTrend: buildEmptyRemediationTrend(monthLabels),
-      topRiskyAssets: [],
-      latestAlerts: [],
-      prioritizedVulnerabilities: [],
-      latestScanImports: [],
-    };
-  }
-
-  const topRiskyAssets = Array.from(
-    avRows.reduce<Map<string, RiskyAssetSummary>>((map, row) => {
-      if (!row.assetCode || !row.assetName) {
-        return map;
-      }
-
-      const current = map.get(row.av.assetId) ?? {
-        id: row.assetCode,
-        name: row.assetName,
-        type: toUiAssetType(row.assetType),
-        model: row.model ?? "—",
-        branch: row.branch ?? "—",
-        region: row.region ?? "Unassigned",
-        exposureLevel: toUiExposureLevel(row.exposureLevel),
-        status: toUiAssetStatus(row.assetStatus),
-        criticality: toUiCriticality(row.criticality),
-        vulnerabilityCount: 0,
-        maxSeverity: "info",
-        contextualPriority: "p5",
-        riskScore: 0,
-      };
-
-      current.vulnerabilityCount += 1;
-      current.riskScore = Math.max(current.riskScore, row.av.riskScore);
-
-      const nextSeverity = row.severity as keyof typeof severityRank | null;
-      if (
-        nextSeverity &&
-        severityRank[nextSeverity] > severityRank[current.maxSeverity]
-      ) {
-        current.maxSeverity = nextSeverity;
-      }
-
-      const nextPriority =
-        row.av.businessPriority as keyof typeof priorityRank | null;
-      if (
-        nextPriority &&
-        priorityRank[nextPriority] < priorityRank[current.contextualPriority]
-      ) {
-        current.contextualPriority = nextPriority;
-      }
-
-      map.set(row.av.assetId, current);
-      return map;
-    }, new Map()).values()
-  )
-    .sort((left, right) => right.riskScore - left.riskScore)
-    .slice(0, 5)
-    .map((asset) => ({
-      id: asset.id,
-      name: asset.name,
-      type: asset.type,
-      model: asset.model,
-      manufacturer: "—",
-      branch: asset.branch,
-      region: asset.region,
-      location: "—",
-      ipAddress: "—",
-      osVersion: "—",
-      criticality: asset.criticality,
-      exposureLevel: asset.exposureLevel,
-      status: asset.status,
-      owner: "Unassigned",
-      lastScanDate: "—",
-      vulnerabilityCount: asset.vulnerabilityCount,
-      maxSeverity: toUiSeverity(asset.maxSeverity),
-      contextualPriority: toUiBusinessPriority(asset.contextualPriority),
-      riskScore: asset.riskScore,
-    }));
-
-  const latestAlerts = alertRows
-    .slice()
-    .sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime())
-    .slice(0, 5)
-    .map((alert) => ({
-      id: alert.id,
-      title: alert.title,
-      description: alert.description ?? "",
-      severity: toUiSeverity(alert.severity),
-      type: toUiAlertType(alert.type),
-      relatedAsset: "Linked entity",
-      relatedCve: "N/A",
-      createdAt: formatDate(alert.createdAt),
-      owner: "Unassigned",
-      status: toUiAlertStatus(alert.status),
-    }));
-
-  const vulnerabilityMap = new Map<string, Vulnerability>();
-
-  for (const row of avRows) {
-    if (!row.cveCode) {
-      continue;
-    }
-
-    const current = vulnerabilityMap.get(row.cveCode) ?? {
-      id: row.cveCode,
-      cveId: row.cveCode,
-      title: row.title ?? row.cveCode,
-      description: row.description ?? "",
-      severity: toUiSeverity(row.severity),
-      cvssScore: row.cvssScore ? Number(row.cvssScore) : 0,
-      cvssVector: row.cvssVector ?? "—",
-      businessPriority: toUiBusinessPriority(row.av.businessPriority),
-      exploitMaturity: "None",
-      affectedAssetsCount: 0,
-      patchAvailable: row.patchAvailable ?? false,
-      aiRemediationAvailable: false,
-      status: "Open",
-      firstSeen: formatDate(row.av.firstSeen),
-      lastSeen: formatDate(row.av.lastSeen),
-      slaDue: formatDate(row.av.slaDue),
-      slaStatus: toUiSlaStatus(row.av.slaStatus),
-      affectedProducts: row.affectedProducts ?? [],
-      impactAnalysis: "",
-      exploitConditions: "",
-      trustedSources: [],
-      primaryRemediation: "",
-      compensatingControls: [],
-      confidenceScore: 0,
-      contextReason: "",
-      aiSummary: "",
-      enrichmentStatus: "Pending",
-      enrichmentError: "",
-      enrichmentModel: "",
-      aiEnrichedAt: "—",
-      aiTags: [],
-    } satisfies Vulnerability;
-
-    current.affectedAssetsCount += 1;
-    vulnerabilityMap.set(row.cveCode, current);
-  }
-
-  const prioritizedVulnerabilities = Array.from(vulnerabilityMap.values())
-    .sort((left, right) => right.cvssScore - left.cvssScore)
-    .slice(0, 5);
 
   return {
     totals: {
-      totalAssets: assetRows.length,
-      atmGabCount: assetRows.filter((asset) => asset.type === "atm" || asset.type === "gab").length,
-      totalVulnerabilities: avRows.length,
-      criticalVulnerabilities: avRows.filter((row) => row.severity === "critical").length,
-      openAlerts: alertRows.filter((alert) => alert.status === "new" || alert.status === "acknowledged").length,
-      overdueTasks: remediationRows.filter((task) => task.slaStatus === "overdue").length,
+      totalAssets: 0,
+      atmGabCount: 0,
+      totalVulnerabilities: 0,
+      criticalVulnerabilities: 0,
+      openAlerts: 0,
+      overdueTasks: 0,
     },
     severityDistribution: [
-      {
-        name: "Critical",
-        value: avRows.filter((row) => row.severity === "critical").length,
-        color: "#EF4444",
-      },
-      {
-        name: "High",
-        value: avRows.filter((row) => row.severity === "high").length,
-        color: "#F59E0B",
-      },
-      {
-        name: "Medium",
-        value: avRows.filter((row) => row.severity === "medium").length,
-        color: "#3B82F6",
-      },
-      {
-        name: "Low",
-        value: avRows.filter((row) => row.severity === "low").length,
-        color: "#10B981",
-      },
+      { name: "Critical", value: 0, color: "#EF4444" },
+      { name: "High", value: 0, color: "#F59E0B" },
+      { name: "Medium", value: 0, color: "#3B82F6" },
+      { name: "Low", value: 0, color: "#10B981" },
     ],
     exposureTrend: buildEmptyTrend(monthLabels),
     remediationTrend: buildEmptyRemediationTrend(monthLabels),
-    topRiskyAssets,
-    latestAlerts,
-    prioritizedVulnerabilities,
-    latestScanImports: importRows
-      .slice()
-      .sort((left, right) => right.importDate.getTime() - left.importDate.getTime())
-      .slice(0, 5)
-      .map((scanImport) => ({
-        id: scanImport.id,
-        name: scanImport.name,
-        scannerSource: toUiScannerSource(scanImport.scannerSource),
-        importDate: formatDate(scanImport.importDate),
-        findingsFound: scanImport.findingsFound,
-        status: toUiImportStatus(scanImport.status),
-      })),
   };
+}
+
+function emptyRiskData(): DashboardRiskData {
+  return {
+    topRiskyAssets: [],
+    prioritizedVulnerabilities: [],
+  };
+}
+
+function emptyActivityData(): DashboardActivityData {
+  return {
+    latestAlerts: [],
+    latestScanImports: [],
+  };
+}
+
+export async function getDashboardSummaryData(): Promise<DashboardSummaryData> {
+  const db = getDb();
+
+  if (!db) {
+    return emptySummaryData();
+  }
+
+  return measureServerTiming(
+    "dashboard.summary",
+    async () => {
+      const monthLabels = ["Nov", "Dec", "Jan", "Feb", "Mar", "Apr"];
+
+      const totalsRows = asRows<DashboardTotalsRow>(
+        await db.execute(sql`
+          select
+            (select count(*)::int from assets) as "totalAssets",
+            (select count(*)::int from assets where type in ('atm', 'gab')) as "atmGabCount",
+            (select count(*)::int from asset_vulnerabilities where status <> 'closed') as "totalVulnerabilities",
+            (
+              select count(*)::int
+              from asset_vulnerabilities av
+              inner join cves c on c.id = av.cve_id
+              where av.status <> 'closed' and c.severity = 'critical'
+            ) as "criticalVulnerabilities",
+            (select count(*)::int from alerts where status in ('new', 'acknowledged')) as "openAlerts",
+            (select count(*)::int from remediation_tasks where sla_status = 'overdue') as "overdueTasks"
+        `)
+      );
+      const severityRows = asRows<SeverityRow>(
+        await db.execute(sql`
+          select c.severity as severity, count(*)::int as total
+          from asset_vulnerabilities av
+          inner join cves c on c.id = av.cve_id
+          where av.status <> 'closed'
+          group by c.severity
+        `)
+      );
+
+      const totals = totalsRows[0] ?? emptySummaryData().totals;
+      const countsBySeverity = new Map(
+        severityRows.map((row) => [row.severity ?? "info", row.total])
+      );
+
+      return {
+        totals,
+        severityDistribution: [
+          {
+            name: "Critical",
+            value: countsBySeverity.get("critical") ?? 0,
+            color: "#EF4444",
+          },
+          {
+            name: "High",
+            value: countsBySeverity.get("high") ?? 0,
+            color: "#F59E0B",
+          },
+          {
+            name: "Medium",
+            value: countsBySeverity.get("medium") ?? 0,
+            color: "#3B82F6",
+          },
+          {
+            name: "Low",
+            value: countsBySeverity.get("low") ?? 0,
+            color: "#10B981",
+          },
+        ],
+        exposureTrend: buildEmptyTrend(monthLabels),
+        remediationTrend: buildEmptyRemediationTrend(monthLabels),
+      };
+    },
+    undefined,
+    (result) => ({
+      totalAssets: result.totals.totalAssets,
+      totalVulnerabilities: result.totals.totalVulnerabilities,
+    })
+  );
+}
+
+export async function getDashboardRiskData(): Promise<DashboardRiskData> {
+  const db = getDb();
+
+  if (!db) {
+    return emptyRiskData();
+  }
+
+  return measureServerTiming(
+    "dashboard.risk",
+    async () => {
+      const [riskyAssetRows, vulnerabilityRows] = await Promise.all([
+        asRows<RiskyAssetRow>(
+          await db.execute(sql`
+            select
+              a.asset_code as id,
+              a.name as name,
+              a.type as type,
+              a.model as model,
+              a.branch as branch,
+              a.region_id::text as region,
+              a.exposure_level as "exposureLevel",
+              a.status as status,
+              a.criticality as criticality,
+              count(av.id)::int as "vulnerabilityCount",
+              case
+                when bool_or(c.severity = 'critical') then 'critical'
+                when bool_or(c.severity = 'high') then 'high'
+                when bool_or(c.severity = 'medium') then 'medium'
+                when bool_or(c.severity = 'low') then 'low'
+                else 'info'
+              end as "maxSeverity",
+              case
+                when bool_or(av.business_priority = 'p1') then 'p1'
+                when bool_or(av.business_priority = 'p2') then 'p2'
+                when bool_or(av.business_priority = 'p3') then 'p3'
+                when bool_or(av.business_priority = 'p4') then 'p4'
+                else 'p5'
+              end as "contextualPriority",
+              coalesce(max(av.risk_score), 0)::int as "riskScore"
+            from asset_vulnerabilities av
+            inner join assets a on a.id = av.asset_id
+            left join cves c on c.id = av.cve_id
+            where av.status <> 'closed'
+            group by a.id
+            order by max(av.risk_score) desc, a.asset_code asc
+            limit 5
+          `)
+        ),
+        asRows<PrioritizedVulnerabilityRow>(
+          await db.execute(sql`
+            select
+              min((av.id)::text) as id,
+              c.cve_id as "cveCode",
+              c.title as title,
+              c.description as description,
+              c.severity as severity,
+              c.cvss_score::text as "cvssScore",
+              c.cvss_vector as "cvssVector",
+              case
+                when bool_or(av.business_priority = 'p1') then 'p1'
+                when bool_or(av.business_priority = 'p2') then 'p2'
+                when bool_or(av.business_priority = 'p3') then 'p3'
+                when bool_or(av.business_priority = 'p4') then 'p4'
+                else 'p5'
+              end as "businessPriority",
+              count(distinct av.asset_id)::int as "affectedAssetsCount",
+              c.patch_available as "patchAvailable",
+              min(av.first_seen) as "firstSeen",
+              max(av.last_seen) as "lastSeen",
+              min(av.sla_due) as "slaDue",
+              case
+                when bool_or(av.sla_status = 'overdue') then 'overdue'
+                when bool_or(av.sla_status = 'at_risk') then 'at_risk'
+                else 'on_track'
+              end as "slaStatus",
+              c.affected_products as "affectedProducts",
+              coalesce(max(av.risk_score), 0)::int as "riskScore"
+            from asset_vulnerabilities av
+            inner join cves c on c.id = av.cve_id
+            where av.status <> 'closed'
+            group by c.id
+            order by max(av.risk_score) desc, c.cvss_score desc nulls last, c.cve_id asc
+            limit 5
+          `)
+        ),
+      ]);
+
+      return {
+        topRiskyAssets: riskyAssetRows.map((asset) => ({
+          id: asset.id,
+          name: asset.name,
+          type: toUiAssetType(asset.type),
+          model: asset.model ?? "—",
+          manufacturer: "—",
+          branch: asset.branch ?? "—",
+          region: asset.region ?? "Unassigned",
+          location: "—",
+          ipAddress: "—",
+          osVersion: "—",
+          criticality: toUiCriticality(asset.criticality),
+          exposureLevel: toUiExposureLevel(asset.exposureLevel),
+          status: toUiAssetStatus(asset.status),
+          owner: "Unassigned",
+          lastScanDate: "—",
+          vulnerabilityCount: asset.vulnerabilityCount,
+          maxSeverity: toUiSeverity(asset.maxSeverity),
+          contextualPriority: toUiBusinessPriority(asset.contextualPriority),
+          riskScore: asset.riskScore,
+        })),
+        prioritizedVulnerabilities: vulnerabilityRows.map((row) => ({
+          id: row.id,
+          cveId: row.cveCode,
+          title: row.title,
+          description: row.description ?? "",
+          severity: toUiSeverity(row.severity),
+          cvssScore: row.cvssScore ? Number(row.cvssScore) : 0,
+          cvssVector: row.cvssVector ?? "—",
+          businessPriority: toUiBusinessPriority(row.businessPriority),
+          exploitMaturity: "None",
+          affectedAssetsCount: row.affectedAssetsCount,
+          patchAvailable: row.patchAvailable,
+          aiRemediationAvailable: false,
+          status: "Open",
+          firstSeen: formatDate(row.firstSeen),
+          lastSeen: formatDate(row.lastSeen),
+          slaDue: formatDate(row.slaDue),
+          slaStatus: toUiSlaStatus(row.slaStatus),
+          affectedProducts: row.affectedProducts ?? [],
+          impactAnalysis: "",
+          exploitConditions: "",
+          trustedSources: [],
+          primaryRemediation: "",
+          compensatingControls: [],
+          confidenceScore: 0,
+          contextReason: "",
+          aiSummary: "",
+          enrichmentStatus: "Pending",
+          enrichmentError: "",
+          enrichmentModel: "",
+          aiEnrichedAt: "—",
+          aiTags: [],
+        })),
+      };
+    },
+    undefined,
+    (result) => ({
+      riskyAssets: result.topRiskyAssets.length,
+      prioritized: result.prioritizedVulnerabilities.length,
+    })
+  );
+}
+
+export async function getDashboardActivityData(): Promise<DashboardActivityData> {
+  const db = getDb();
+
+  if (!db) {
+    return emptyActivityData();
+  }
+
+  return measureServerTiming(
+    "dashboard.activity",
+    async () => {
+      const [alertRows, importRows] = await Promise.all([
+        asRows<LatestAlertRow>(
+          await db.execute(sql`
+            select
+              a.id as id,
+              a.title as title,
+              a.description as description,
+              a.severity as severity,
+              a.type as type,
+              coalesce(asset.asset_code, asset.name, 'Linked entity') as "relatedAsset",
+              a.created_at as "createdAt",
+              a.status as status
+            from alerts a
+            left join assets asset on asset.id = a.related_asset_id
+            order by a.created_at desc
+            limit 5
+          `)
+        ),
+        asRows<LatestScanImportRow>(
+          await db.execute(sql`
+            select
+              id as id,
+              name as name,
+              scanner_source as "scannerSource",
+              import_date as "importDate",
+              findings_found as "findingsFound",
+              status as status
+            from scan_imports
+            order by import_date desc
+            limit 5
+          `)
+        ),
+      ]);
+
+      return {
+        latestAlerts: alertRows.map((alert) => ({
+          id: alert.id,
+          title: alert.title,
+          description: alert.description ?? "",
+          severity: toUiSeverity(alert.severity),
+          type: toUiAlertType(alert.type),
+          relatedAsset: alert.relatedAsset ?? "Linked entity",
+          relatedCve: "N/A",
+          createdAt: formatDate(alert.createdAt),
+          owner: "Unassigned",
+          status: toUiAlertStatus(alert.status),
+        })),
+        latestScanImports: importRows.map((scanImport) => ({
+          id: scanImport.id,
+          name: scanImport.name,
+          scannerSource: toUiScannerSource(scanImport.scannerSource),
+          importDate: formatDate(scanImport.importDate),
+          findingsFound: scanImport.findingsFound,
+          status: toUiImportStatus(scanImport.status),
+        })),
+      };
+    },
+    undefined,
+    (result) => ({
+      alerts: result.latestAlerts.length,
+      imports: result.latestScanImports.length,
+    })
+  );
 }

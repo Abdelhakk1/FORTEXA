@@ -18,6 +18,13 @@ export default function ImportDetailClient({
   const imp = data.scanImport;
   const steps = data.steps;
   const reviewFindings = data.findings.slice(0, 5);
+  const errorMessages =
+    imp.errorDetails?.errors?.length
+      ? imp.errorDetails.errors
+      : imp.errorDetails?.message
+        ? [imp.errorDetails.message]
+        : [];
+  const warningMessages = imp.errorDetails?.warnings ?? [];
 
   const sevDistOption = {
     tooltip: { trigger: "item" as const, backgroundColor: "#FFFFFF", borderColor: "#E9ECEF", borderWidth: 1, textStyle: { color: "#1A1A2E" } },
@@ -48,20 +55,23 @@ export default function ImportDetailClient({
               )}
             </Button>
             <Button className="gradient-accent text-[#1A1A2E] dark:text-[#fafafa] cursor-pointer" asChild>
-              <Link href="/vulnerabilities">View Vulnerabilities <ArrowRight className="h-4 w-4 ml-2" /></Link>
+              <Link href="/vulnerabilities" prefetch={false}>View Vulnerabilities <ArrowRight className="h-4 w-4 ml-2" /></Link>
             </Button>
           </div>
         }
       />
 
       {/* Summary Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4 mb-6 animate-stagger">
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4 mb-6 animate-stagger">
         {[
           { label: "Assets Found", value: imp.assetsFound, icon: Server, color: "text-blue-600 bg-blue-50" },
-          { label: "Findings", value: imp.findingsFound.toLocaleString(), icon: Bug, color: "text-[#1B4332] bg-[#1B4332]/12" },
-          { label: "CVEs Linked", value: imp.cvesLinked, icon: Link2, color: "text-purple-400 bg-purple-500/12" },
           { label: "New Assets", value: imp.newAssets, icon: Server, color: "text-emerald-600 bg-emerald-500/12" },
-          { label: "New Vulns", value: imp.newVulnerabilities, icon: Bug, color: "text-amber-600 bg-amber-500/12" },
+          { label: "Matched Assets", value: imp.matchedAssets, icon: Link2, color: "text-purple-400 bg-purple-500/12" },
+          { label: "New Findings", value: imp.newFindings, icon: Bug, color: "text-amber-600 bg-amber-500/12" },
+          { label: "Reopened", value: imp.reopenedFindings, icon: AlertTriangle, color: "text-orange-600 bg-orange-500/12" },
+          { label: "Fixed", value: imp.fixedFindings, icon: CheckCircle2, color: "text-emerald-600 bg-emerald-500/12" },
+          { label: "Unchanged", value: imp.unchangedFindings, icon: FileText, color: "text-[#1B4332] bg-[#1B4332]/12" },
+          { label: "Low-Confidence", value: imp.lowConfidenceMatches, icon: AlertTriangle, color: imp.lowConfidenceMatches > 0 ? "text-amber-600 bg-amber-500/12" : "text-[#6B7280] dark:text-[#94A3B8] bg-[#F3F4F6] dark:bg-[#27272a]" },
           { label: "Errors", value: imp.errors, icon: XCircle, color: imp.errors > 0 ? "text-red-600 bg-red-500/12" : "text-[#6B7280] dark:text-[#94A3B8] bg-[#F3F4F6] dark:bg-[#27272a]" },
         ].map(card => (
           <Card key={card.label} className="p-4 border border-[#E9ECEF] bg-white dark:border-[#27272a] dark:bg-[#0f0f13] text-center">
@@ -109,8 +119,18 @@ export default function ImportDetailClient({
                   <div className="flex items-start gap-3 p-3 rounded-lg bg-red-500/8 border border-red-500/15">
                     <XCircle className="h-4 w-4 text-red-600 mt-0.5 shrink-0" />
                     <div>
-                      <p className="text-sm font-medium text-red-600">{imp.errors} parsing error(s)</p>
-                      <p className="text-xs text-red-600/70">Some findings could not be parsed. Check source file format.</p>
+                      <p className="text-sm font-medium text-red-600">{imp.errors} import error(s)</p>
+                      {errorMessages.length ? (
+                        <div className="mt-1 space-y-1">
+                          {errorMessages.slice(0, 4).map((message) => (
+                            <p key={message} className="text-xs text-red-600/80">
+                              {message}
+                            </p>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-xs text-red-600/70">The importer recorded an error but no detail was saved.</p>
+                      )}
                     </div>
                   </div>
                 )}
@@ -119,7 +139,17 @@ export default function ImportDetailClient({
                     <AlertTriangle className="h-4 w-4 text-amber-600 mt-0.5 shrink-0" />
                     <div>
                       <p className="text-sm font-medium text-amber-600">{imp.warnings} warning(s)</p>
-                      <p className="text-xs text-amber-600/70">Some assets could not be automatically mapped. Manual review recommended.</p>
+                      {warningMessages.length ? (
+                        <div className="mt-1 space-y-1">
+                          {warningMessages.slice(0, 4).map((message) => (
+                            <p key={message} className="text-xs text-amber-600/80">
+                              {message}
+                            </p>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-xs text-amber-600/70">Low-confidence correlations or parser warnings were recorded. Manual review is recommended before operational action.</p>
+                      )}
                     </div>
                   </div>
                 )}
@@ -200,7 +230,9 @@ export default function ImportDetailClient({
                 { label: "Import Date", value: imp.importDate },
                 { label: "Imported By", value: imp.importedBy },
                 { label: "Processing Time", value: imp.processingTime },
-                { label: "Closed Vulns", value: String(imp.closedVulnerabilities) },
+                { label: "Matched Assets", value: String(imp.matchedAssets) },
+                { label: "New / Reopened", value: `${imp.newFindings} / ${imp.reopenedFindings}` },
+                { label: "Fixed / Unchanged", value: `${imp.fixedFindings} / ${imp.unchangedFindings}` },
               ].map(item => (
                 <div key={item.label}>
                   <div className="flex justify-between">
@@ -253,7 +285,7 @@ export default function ImportDetailClient({
             <h3 className="text-sm font-semibold text-[#1A1A2E] dark:text-[#fafafa] mb-4">Actions</h3>
             <div className="space-y-2">
               <Button variant="outline" className="w-full cursor-pointer justify-start border-[#E9ECEF] dark:border-[#27272a] bg-[#F9FAFB] dark:bg-[#1a1a22] text-[#6B7280] dark:text-[#94A3B8] hover:bg-[#F0FDF4] dark:hover:bg-[#1a1a22]" asChild>
-                <Link href="/remediation"><FileText className="h-4 w-4 mr-2" /> Process Remediation</Link>
+                <Link href="/remediation" prefetch={false}><FileText className="h-4 w-4 mr-2" /> Process Remediation</Link>
               </Button>
               <Button variant="outline" className="w-full cursor-pointer justify-start border-[#E9ECEF] dark:border-[#27272a] bg-[#F9FAFB] dark:bg-[#1a1a22] text-[#6B7280] dark:text-[#94A3B8] hover:bg-[#F0FDF4] dark:hover:bg-[#1a1a22]" asChild={Boolean(data.downloadUrl)} disabled={!data.downloadUrl}>
                 {data.downloadUrl ? (

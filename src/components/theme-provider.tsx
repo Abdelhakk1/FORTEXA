@@ -1,6 +1,12 @@
 "use client";
 
-import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react";
 
 type Theme = "light" | "dark";
 
@@ -11,26 +17,55 @@ interface ThemeContextType {
 
 const ThemeContext = createContext<ThemeContextType>({ theme: "light", toggleTheme: () => {} });
 const STORAGE_KEY = "fortexa-theme";
+const THEME_EVENT = "fortexa-theme-change";
 
-function getInitialTheme(): Theme {
+function getPreferredTheme(): Theme {
   if (typeof window === "undefined") {
     return "light";
   }
 
-  const stored = localStorage.getItem(STORAGE_KEY);
-  return stored === "dark" ? "dark" : "light";
+  const storedTheme = localStorage.getItem(STORAGE_KEY);
+
+  if (storedTheme === "dark" || storedTheme === "light") {
+    return storedTheme;
+  }
+
+  return window.matchMedia("(prefers-color-scheme: dark)").matches
+    ? "dark"
+    : "light";
+}
+
+function subscribe(onStoreChange: () => void) {
+  window.addEventListener("storage", onStoreChange);
+  window.addEventListener(THEME_EVENT, onStoreChange);
+
+  return () => {
+    window.removeEventListener("storage", onStoreChange);
+    window.removeEventListener(THEME_EVENT, onStoreChange);
+  };
+}
+
+function getSnapshot(): Theme {
+  return getPreferredTheme();
+}
+
+function getServerSnapshot(): Theme {
+  return "light";
 }
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
-  const [theme, setTheme] = useState<Theme>(getInitialTheme);
+  const theme = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", theme === "dark");
-    localStorage.setItem(STORAGE_KEY, theme);
+    document.documentElement.style.colorScheme = theme;
+    document.documentElement.dataset.theme = theme;
   }, [theme]);
 
   const toggleTheme = () => {
-    setTheme((currentTheme) => (currentTheme === "light" ? "dark" : "light"));
+    const nextTheme = theme === "light" ? "dark" : "light";
+    localStorage.setItem(STORAGE_KEY, nextTheme);
+    window.dispatchEvent(new Event(THEME_EVENT));
   };
 
   return (

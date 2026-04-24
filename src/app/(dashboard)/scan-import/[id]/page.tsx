@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation";
-import { requireAuth } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
 import { getScanImportDetail } from "@/lib/services/scan-imports";
 import ImportDetailClient from "./scan-import-detail-client";
 
@@ -10,7 +10,7 @@ export default async function ScanImportDetailPage({
 }: {
   params: Params;
 }) {
-  await requireAuth();
+  await requirePermission("scan_imports.read");
   const { id } = await params;
   const data = await getScanImportDetail(id);
 

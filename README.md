@@ -1,22 +1,22 @@
-# FORTEXA MVP Backend Flow
+# FORTEXA MVP Operations Flow
 
-FORTEXA is a Next.js + Supabase vulnerability-management MVP. This phase keeps the current app architecture and UI, but stabilizes the product around one canonical ingestion path so the main pages can be backed by real data instead of placeholders.
+FORTEXA is a Next.js + Supabase vulnerability-operations MVP for ATM, GAB, branch, and edge environments. This phase keeps the current app architecture and design language intact while making the product more credible for real operators: deterministic lifecycle tracking, delta-aware Nessus imports, assignable remediation work, and persisted OpenRouter-backed playbooks with trust metadata.
 
 ## Canonical Importer
 
 - Active MVP scan importer: `Nessus (.nessus)`
-- Disabled for now in the UI: `OpenVAS`, `Nmap`, `Qualys`
-- Reason: the existing schema and findings model are already aligned with Nessus-style vulnerability findings, CVE mapping, and remediation workflows
+- Disabled in the UI for now: `OpenVAS`, `Nmap`, `Qualys`
+- Reason: the current schema and workflow are already aligned with Nessus-style findings, CVE linkage, and remediation operations
 
 ## How Assets Enter The System
 
-FORTEXA now supports three stable asset entry paths:
+FORTEXA supports three stable asset entry paths:
 
 1. Manual asset creation on `/assets`
 2. CSV asset import on `/assets`
 3. Nessus scan import on `/scan-import`
 
-All three paths write into the same `assets` table and use the same deterministic matching strategy:
+All three paths write into the same `assets` table and use deterministic matching:
 
 1. `asset_code` when explicitly supplied
 2. external scanner asset ID
@@ -27,23 +27,122 @@ All three paths write into the same `assets` table and use the same deterministi
 
 If a match is found, the asset is updated. Otherwise a new asset is created with a generated code such as `ATM-001` or `SRV-001`.
 
+### Deterministic Asset Inference
+
+FORTEXA now stores lightweight deterministic inference in `assets.metadata.inference`:
+
+- `role`
+- `siteArchetype`
+- `confidence`
+- `reasons`
+- `inferredFromImportId` when the inference came from scan ingestion
+
+Current inferred roles include:
+
+- `atm_controller`
+- `branch_router`
+- `vendor_managed_server`
+- `workstation`
+- `support_terminal`
+- `unknown`
+
+This inference improves prioritization context and AI enrichment prompts, but it is not the source of truth for asset identity.
+
 ## Scan Import Flow
 
-`/scan-import` now runs a real MVP flow:
+`/scan-import` runs a real Nessus ingestion flow:
 
 1. Upload a `.nessus` file
 2. Store the original file in Supabase Storage
 3. Create a `scan_imports` row
-4. Parse the Nessus XML on the server
+4. Parse Nessus XML on the server
 5. Normalize hosts into assets
-6. Create or update assets
+6. Match or create assets deterministically
 7. Create `scan_findings`
 8. Create or update `cves`
 9. Create or update `asset_vulnerabilities`
-10. Create simple alerts for new critical or high-risk imported issues
+10. Queue optional AI enrichment after the deterministic records exist
 11. Persist summary counters and final import status
 
-The same processing function is also wired into Inngest for future async offload, but the MVP path processes inline so local development stays reliable.
+### Import Deltas
+
+Each import now stores and surfaces delta counters:
+
+- `matched_assets`
+- `new_findings`
+- `fixed_findings`
+- `reopened_findings`
+- `unchanged_findings`
+- `low_confidence_matches`
+
+Delta handling is scoped to assets present in the current import. FORTEXA will not auto-close findings for assets that were out of scope for that scan.
+
+### Asset-Vulnerability Lifecycle
+
+The primary operator state is now the `asset_vulnerabilities` record, not the aggregate CVE row.
+
+Supported lifecycle states:
+
+- `new`
+- `open`
+- `mitigated`
+- `closed`
+- `reopened`
+- `accepted`
+- `false_positive`
+- `compensating_control`
+
+Immutable lifecycle history is stored in `asset_vulnerability_events`, with event types such as:
+
+- `introduced`
+- `unchanged`
+- `fixed`
+- `reopened`
+- `status_changed`
+- `task_linked`
+- `task_completed`
+
+## Primary Vulnerability Surface
+
+`/vulnerabilities` is now instance-oriented and centered on asset-vulnerability work.
+
+`/vulnerabilities/[id]` is UUID-first for `asset_vulnerabilities.id`, and legacy `CVE-*` links now resolve into the same AV-first operator screen by redirecting to the best matching asset-vulnerability record.
+
+The asset-vulnerability detail view now shows:
+
+- deterministic state: asset, CVE, status, first seen, last seen, SLA, risk score, business priority, last import
+- raw scanner evidence with host, port, protocol, match confidence, and parser notes
+- lifecycle timeline from `asset_vulnerability_events`
+- related fleet exposure for the same CVE
+- linked remediation tasks
+- linked alerts
+- AI operator playbook
+- trust panel and provenance
+
+## Remediation Workflow
+
+FORTEXA now supports real remediation assignment and updates against persisted tasks.
+
+### Supported Operations
+
+- create remediation task from the asset-vulnerability detail page
+- assign or reassign to any active profile
+- update due date
+- update priority
+- update status
+- update progress
+- update notes and change request
+
+### Permission Model
+
+- `remediation.write`
+  - create, assign, reassign, due date, and priority changes
+- `remediation.update_status`
+  - status, progress, and notes updates
+- assigned users without broad write permissions
+  - may update their own task status, progress, notes, and change request
+
+The `/remediation` queue keeps its existing page structure, but now includes a real task detail sheet for operations instead of only passive rows.
 
 ## CSV Asset Import Format
 
@@ -79,10 +178,94 @@ Sample file:
 
 - [`fixtures/sample-assets.csv`](/Users/abdelhak/Documents/PFE/FORTEXA/fixtures/sample-assets.csv)
 
-## Dev Fixtures
+## AI Enrichment Flow
 
-- Nessus sample: [`fixtures/sample-nessus-import.nessus`](/Users/abdelhak/Documents/PFE/FORTEXA/fixtures/sample-nessus-import.nessus)
-- CSV sample: [`fixtures/sample-assets.csv`](/Users/abdelhak/Documents/PFE/FORTEXA/fixtures/sample-assets.csv)
+AI is assistive and async-first. Deterministic import persists the baseline records first. OpenRouter never blocks import success.
+
+### Persisted AI Layers
+
+FORTEXA now keeps AI responsibilities split:
+
+- `cve_enrichments`
+  - shared knowledge-level enrichment for the CVE itself
+- `asset_vulnerability_enrichments`
+  - operator-facing, context-aware playbooks for a specific asset-vulnerability instance
+
+### OpenRouter Contract
+
+FORTEXA sends structured enrichment requests through OpenRouter using `inclusionai/ling-2.6-flash:free` by default, overridable with `OPENROUTER_MODEL`.
+
+Structured AI output is validated before persistence.
+
+For CVE knowledge enrichment, the contract includes:
+
+- `summary`
+- `riskExplanation`
+- `impactAnalysis`
+- `exploitConditions`
+- `remediationGuidance`
+- `recommendedControls`
+- `citations`
+- `confidence`
+- `unsupportedClaims`
+- `trustLabels`
+- `tags`
+
+For asset-vulnerability playbooks, the contract includes:
+
+- `summary`
+- `technicalRationale`
+- `businessRationale`
+- `primaryMitigation`
+- `recommendedActions`
+- `validationSteps`
+- `compensatingControls`
+- `rollbackCaution`
+- `maintenanceWindowNote`
+- `citations`
+- `confidence`
+- `unsupportedClaims`
+- `trustLabels`
+
+### Trust Metadata
+
+Persisted enrichment metadata now includes:
+
+- input hash / source fingerprint
+- prompt version
+- provider
+- model
+- validation result
+- citations
+- unsupported claims
+- trust labels
+- error state
+- enrichment timestamp
+
+### Where Enrichment Runs
+
+- automatically after Nessus import processing
+- on explicit retry from `/vulnerabilities/[uuid]`
+
+### Failure Behavior
+
+- malformed AI JSON is rejected and stored as `failed`
+- OpenRouter downtime or missing `OPENROUTER_API_KEY` does not break imports
+- pages render deterministic facts even when enrichment is absent
+- failed enrichments store error state and remain retryable
+
+## Trust Panel
+
+The asset-vulnerability detail page includes a trust panel that separates:
+
+- deterministic facts
+- retrieved factual sources
+- model-generated claims
+- unsupported or unverified claims
+- confidence and enrichment status
+- timestamps and graceful pending/failed states
+
+Real empty states are shown when enrichment or citations are missing. There is no fake fallback AI prose.
 
 ## Tables Involved
 
@@ -91,127 +274,138 @@ Sample file:
 - `scan_findings`
 - `cves`
 - `asset_vulnerabilities`
+- `asset_vulnerability_events`
 - `cve_enrichments`
+- `asset_vulnerability_enrichments`
+- `cve_source_references`
 - `cve_recommended_controls`
 - `remediation_tasks`
 - `alerts`
 - `report_definitions`
 
-## AI Enrichment Flow
+## Dev Fixtures
 
-AI enrichment is now a persisted, optional post-import step for CVE-backed findings.
-
-1. Nessus import completes normally
-2. Newly seen or changed CVEs are queued for enrichment
-3. Inngest calls the server-side Gemini enrichment runner
-4. Gemini returns structured JSON only
-5. The app validates and sanitizes the JSON before saving
-6. Saved results land in:
-   - `cve_enrichments`
-   - `cve_recommended_controls`
-7. The vulnerability detail page reads those persisted results directly
-
-Core import success does not depend on Gemini. If AI is unavailable, the import still completes and enrichment stays pending or failed for later retry.
-
-### Persisted Enrichment Fields
-
-FORTEXA persists AI output in `cve_enrichments` using these fields:
-
-- `summary`
-- `impact_analysis`
-- `exploit_conditions`
-- `primary_remediation`
-- `context_reason`
-- `confidence_score`
-- `enrichment_status`
-- `ai_model`
-- `ai_error`
-- `source_fingerprint`
-- `tags`
-- `enriched_at`
-
-Recommended controls are stored in `cve_recommended_controls` with `source = 'ai'`.
-
-### Where Enrichment Runs
-
-- automatically after Nessus import processing
-- on explicit retry from `/vulnerabilities/[id]`
-
-### Retry Behavior
-
-- vulnerability detail pages show an enrichment status badge
-- authorized users with `cves.enrich` can use the `Retry AI` action
-- retry first attempts background queueing through Inngest
-- if queueing is unavailable, the action falls back to a direct server-side run
-
-### Failure Behavior
-
-- malformed Gemini JSON is rejected and recorded as `failed`
-- Gemini downtime or missing `GEMINI_API_KEY` does not break imports
-- failed enrichments store `ai_error` and can be retried later
-- pages render safe fallback text when enrichment is absent
-
-### Environment
-
-Required for live enrichment:
-
-- `GEMINI_API_KEY`
-
-Optional but recommended:
-
-- `GEMINI_MODEL`
-- `INNGEST_EVENT_KEY`
-- `INNGEST_SIGNING_KEY`
-- `INNGEST_APP_ID`
-
-### Validation / Smoke Fixture
-
-Use this fixture to validate the expected Gemini response shape during local smoke testing:
-
-- [`fixtures/sample-cve-enrichment-response.json`](/Users/abdelhak/Documents/PFE/FORTEXA/fixtures/sample-cve-enrichment-response.json)
-
-The validation schema lives in:
-
-- [`src/lib/services/gemini.ts`](/Users/abdelhak/Documents/PFE/FORTEXA/src/lib/services/gemini.ts)
-
-The pure prompt/fingerprint helpers live in:
-
-- [`src/lib/services/cve-enrichment.ts`](/Users/abdelhak/Documents/PFE/FORTEXA/src/lib/services/cve-enrichment.ts)
+- Nessus baseline: [`fixtures/sample-nessus-import.nessus`](/Users/abdelhak/Documents/PFE/FORTEXA/fixtures/sample-nessus-import.nessus)
+- Nessus delta follow-up: [`fixtures/sample-nessus-delta-followup.nessus`](/Users/abdelhak/Documents/PFE/FORTEXA/fixtures/sample-nessus-delta-followup.nessus)
+- Asset CSV: [`fixtures/sample-assets.csv`](/Users/abdelhak/Documents/PFE/FORTEXA/fixtures/sample-assets.csv)
+- Valid CVE enrichment payload: [`fixtures/sample-cve-enrichment-response.json`](/Users/abdelhak/Documents/PFE/FORTEXA/fixtures/sample-cve-enrichment-response.json)
+- Malformed CVE enrichment payload: [`fixtures/malformed-cve-enrichment-response.json`](/Users/abdelhak/Documents/PFE/FORTEXA/fixtures/malformed-cve-enrichment-response.json)
 
 ## Local Verification
 
 1. Ensure `.env.local` points to the working Supabase pooler connection and service role credentials.
-2. Run:
+2. Set the AI provider env vars when you want enrichment enabled:
+
+```bash
+OPENROUTER_API_KEY=__CHANGE_ME__
+OPENROUTER_MODEL=inclusionai/ling-2.6-flash:free
+OPENROUTER_FALLBACK_MODEL=
+OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
+OPENROUTER_TIMEOUT_MS=30000
+```
+
+3. Apply the latest DB migration before runtime verification.
+4. Run:
 
 ```bash
 npm install
+npm run ai:smoke
+npm run av:smoke -- <asset-vulnerability-uuid>
 npm run dev
+# in a second shell, with the dev server running:
+npm run smoke:browser
+npm run smoke:dark-mode
 ```
 
-3. Verify manual asset creation:
+5. Verify manual asset creation:
    - open `/assets`
    - create an asset with the inline form
-4. Verify CSV asset import:
-   - use [`fixtures/sample-assets.csv`](/Users/abdelhak/Documents/PFE/FORTEXA/fixtures/sample-assets.csv) on `/assets`
-5. Verify scan import:
+6. Verify CSV asset import:
+   - import [`fixtures/sample-assets.csv`](/Users/abdelhak/Documents/PFE/FORTEXA/fixtures/sample-assets.csv) on `/assets`
+7. Verify Nessus baseline import:
    - open `/scan-import`
    - upload [`fixtures/sample-nessus-import.nessus`](/Users/abdelhak/Documents/PFE/FORTEXA/fixtures/sample-nessus-import.nessus)
-6. Verify AI enrichment:
-   - open a CVE detail page from `/vulnerabilities`
-   - confirm `AI Summary`, `Why This Priority?`, and remediation guidance show persisted content when enrichment is complete
-   - if the status is `Pending` or `Failed`, use `Retry AI`
-   - if `GEMINI_API_KEY` is removed locally, confirm the page still renders and retries fail safely without breaking the import pipeline
-7. Check downstream pages:
+8. Verify delta behavior:
+   - upload [`fixtures/sample-nessus-delta-followup.nessus`](/Users/abdelhak/Documents/PFE/FORTEXA/fixtures/sample-nessus-delta-followup.nessus)
+   - confirm the import detail page shows new, fixed, reopened, unchanged, and matched-asset counters where applicable
+   - optionally re-import the baseline file to exercise a reopened path for findings that were fixed by the follow-up
+9. Verify operator detail:
+   - open `/vulnerabilities`
+   - select an asset-vulnerability UUID-backed record
+   - confirm evidence, lifecycle timeline, linked tasks, alerts, AI playbook, and trust panel render safely
+10. Verify remediation workflow:
+   - create a task from the vulnerability detail page
+   - assign it to an active profile
+   - change status, progress, due date, and notes from `/remediation`
+11. Verify AI retry and failure tolerance:
+   - use `Retry AI` on an asset-vulnerability detail page
+   - remove `OPENROUTER_API_KEY` locally and confirm the page still renders while enrichment fails cleanly
+   - validate the schema helpers against both the valid and malformed fixture payloads
+12. Check downstream pages:
    - `/dashboard`
    - `/assets`
-   - `/vulnerabilities`
    - `/alerts`
    - `/remediation`
    - `/reports`
 
+## Migration
+
+This pass adds:
+
+- [`src/db/migrations/0005_ops_lifecycle_and_trust.sql`](/Users/abdelhak/Documents/PFE/FORTEXA/src/db/migrations/0005_ops_lifecycle_and_trust.sql)
+- [`src/db/migrations/0007_ai_enrichment_leases.sql`](/Users/abdelhak/Documents/PFE/FORTEXA/src/db/migrations/0007_ai_enrichment_leases.sql)
+
+It introduces:
+
+- expanded `asset_vulnerabilities.status` values
+- `asset_vulnerability_events`
+- `asset_vulnerability_enrichments`
+- operator playbook fields for `primary_mitigation` and `validation_steps`
+- scan import delta counters
+- extra trust metadata columns on `cve_enrichments`
+- nullable AI enrichment lease/retry metadata for stale processing recovery
+
+### Safe Production Migration Workflow
+
+Use forward-only SQL migration files from `src/db/migrations`. Never edit an
+already-applied production migration; add a new numbered migration instead.
+
+1. Review the SQL file and confirm it is non-destructive.
+2. Ensure `.env.local` points to the target Supabase database.
+3. Apply one migration at a time:
+
+```bash
+npm run db:migrate:file -- src/db/migrations/0007_ai_enrichment_leases.sql
+```
+
+4. Verify the app:
+
+```bash
+npm run typecheck
+npm run test:ai
+npm run test:import
+npm run build
+```
+
+For larger schema changes, run the Supabase/Drizzle diff process in a staging
+project first, then copy the reviewed forward-only SQL into the next migration
+file.
+
 ## Known MVP Limits
 
 - Only Nessus is active as a scan importer right now
-- Nessus findings without CVEs are stored as `scan_findings`, but only CVE-backed findings become `asset_vulnerabilities`
-- AI enrichment remains optional and non-blocking, and currently targets CVE-backed records rather than non-CVE findings
-- Report generation is still scaffolded; default report definitions are seeded automatically, but generated artifacts are not the focus of this phase
+- Delta intelligence is scoped to assets seen in the current import
+- Legacy `CVE-*` links resolve to the AV-first detail screen instead of rendering a separate detail UI
+- Alerts remain simple and deterministic, not a full rules engine
+- Report generation is still scaffold-level; this phase mainly feeds it better lifecycle and enrichment data
+- Fleet clustering is intentionally deferred; the current differentiator is deterministic asset-role/site-archetype inference plus operator-safe AI playbooks
+
+## Deferred Platform Roadmap
+
+- P0: organization/team tenancy, tenant-scoped policies, and tenant-aware audit queries before serious multi-customer use.
+- P0: complete migration runbook with staging promotion and rollback-by-forward-fix procedures.
+- P1: durable background jobs for large imports and AI enrichment with queue rows, leases, retries, cron recovery, and progress UI.
+- P1: stronger scan provenance with stable finding fingerprints, scan-to-scan diff views, and reviewed deduplication constraints.
+- P1: report export and email notifications backed by stored report runs and notification preferences.
+- P2: accepted-risk/false-positive approvals, SLA policy customization, comments, and activity timelines.
+- P2: EPSS, CISA KEV, exploit intelligence, and asset criticality tuning in risk scoring.

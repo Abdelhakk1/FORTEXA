@@ -7,6 +7,8 @@ import { inngest } from "@/inngest/client";
 export const fortexaEventNames = {
   scanImportRequested: "scan.import.requested",
   cveEnrichmentRequested: "cve.enrichment.requested",
+  assetVulnerabilityEnrichmentRequested:
+    "asset_vulnerability.enrichment.requested",
   reportGenerationRequested: "report.generation.requested",
   notificationDispatchRequested: "notification.dispatch.requested",
 } as const;

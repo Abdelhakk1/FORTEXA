@@ -240,7 +240,7 @@ export function ScanImportPageClient({ data }: ScanImportPageClientProps) {
               {data.imports.items.map((scanImport) => (
                 <tr key={scanImport.id} className="dark-table-row border-b border-[#F3F4F6] last:border-0 dark:border-[#27272a] hover:bg-[#F9FAFB] dark:hover:bg-[#1a1a22]/50">
                   <td className="py-3 px-4">
-                    <Link href={`/scan-import/${scanImport.id}`} className="text-sm font-medium text-[#1A1A2E] dark:text-[#fafafa] hover:text-[#0C5CAB] dark:hover:text-[#60A5FA] cursor-pointer">{scanImport.name}</Link>
+                    <Link href={`/scan-import/${scanImport.id}`} prefetch={false} className="text-sm font-medium text-[#1A1A2E] dark:text-[#fafafa] hover:text-[#0C5CAB] dark:hover:text-[#60A5FA] cursor-pointer">{scanImport.name}</Link>
                     <p className="text-xs text-[#6B7280] dark:text-[#94A3B8]">{scanImport.fileName}</p>
                   </td>
                   <td className="py-3 px-4"><ScannerBadge source={scanImport.scannerSource} /></td>
@@ -251,7 +251,7 @@ export function ScanImportPageClient({ data }: ScanImportPageClientProps) {
                   <td className="py-3 px-4 text-center font-medium text-[#1A1A2E] dark:text-[#fafafa]">{scanImport.cvesLinked}</td>
                   <td className="py-3 px-4"><StatusBadge status={scanImport.status} /></td>
                   <td className="py-3 px-4">
-                    <Link href={`/scan-import/${scanImport.id}`}><Button variant="ghost" size="sm" className="h-9 w-9 p-0 cursor-pointer text-[#6B7280] dark:text-[#94A3B8] hover:text-[#0C5CAB] dark:hover:text-[#60A5FA] hover:bg-[#EFF6FF] dark:hover:bg-[#1a1a22]"><Eye className="h-4 w-4" /></Button></Link>
+                    <Link href={`/scan-import/${scanImport.id}`} prefetch={false}><Button variant="ghost" size="sm" className="h-9 w-9 p-0 cursor-pointer text-[#6B7280] dark:text-[#94A3B8] hover:text-[#0C5CAB] dark:hover:text-[#60A5FA] hover:bg-[#EFF6FF] dark:hover:bg-[#1a1a22]"><Eye className="h-4 w-4" /></Button></Link>
                   </td>
                 </tr>
               ))}

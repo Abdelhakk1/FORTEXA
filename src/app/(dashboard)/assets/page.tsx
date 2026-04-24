@@ -1,5 +1,6 @@
-import { requireAuth } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
 import { listAssets } from "@/lib/services/assets";
+import { startServerTiming } from "@/lib/observability/timing";
 import { AssetsPageClient } from "./assets-page-client";
 
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
@@ -13,8 +14,8 @@ export default async function AssetsPage({
 }: {
   searchParams: SearchParams;
 }) {
-  await requireAuth();
-
+  const timing = startServerTiming("route.assets.page");
+  await requirePermission("assets.read");
   const params = await searchParams;
   const filters = {
     search: getValue(params.search) ?? "",
@@ -35,6 +36,7 @@ export default async function AssetsPage({
     exposureLevel: filters.exposureLevel,
     page: filters.page,
   });
+  timing.end({ total: data.assets.total });
 
   return <AssetsPageClient data={data} filters={filters} />;
 }

@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation";
-import { requireAuth } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
 import { getAssetDetail } from "@/lib/services/assets";
 import AssetDetailClient from "./asset-detail-client";
 
@@ -10,7 +10,7 @@ export default async function AssetDetailPage({
 }: {
   params: Params;
 }) {
-  await requireAuth();
+  await requirePermission("assets.read");
   const { id } = await params;
   const data = await getAssetDetail(id);
 

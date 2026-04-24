@@ -59,6 +59,12 @@ export const scanImports = pgTable(
     findingsFound: integer("findings_found").notNull().default(0),
     cvesLinked: integer("cves_linked").notNull().default(0),
     newAssets: integer("new_assets").notNull().default(0),
+    matchedAssets: integer("matched_assets").notNull().default(0),
+    newFindings: integer("new_findings").notNull().default(0),
+    fixedFindings: integer("fixed_findings").notNull().default(0),
+    reopenedFindings: integer("reopened_findings").notNull().default(0),
+    unchangedFindings: integer("unchanged_findings").notNull().default(0),
+    lowConfidenceMatches: integer("low_confidence_matches").notNull().default(0),
     newVulnerabilities: integer("new_vulnerabilities").notNull().default(0),
     closedVulnerabilities: integer("closed_vulnerabilities")
       .notNull()

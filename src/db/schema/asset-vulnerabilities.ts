@@ -68,7 +68,7 @@ export const assetVulnerabilities = pgTable(
       .notNull()
       .defaultNow(),
 
-    status: vulnerabilityStatusEnum("status").notNull().default("open"),
+    status: vulnerabilityStatusEnum("status").notNull().default("new"),
     businessPriority: businessPriorityEnum("business_priority")
       .notNull()
       .default("p3"),
@@ -134,8 +134,8 @@ export const assetVulnerabilities = pgTable(
      * Partial index: only index sla_due for open vulnerabilities.
      * Used by the SLA breach detection Inngest job and dashboard filters.
      */
-    index("idx_av_sla_open")
+    index("idx_av_sla_actionable")
       .on(table.slaDue)
-      .where(sql`${table.status} = 'open'`),
+      .where(sql`${table.status} in ('new', 'open', 'reopened')`),
   ]
 );

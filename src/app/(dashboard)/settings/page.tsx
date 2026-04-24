@@ -56,6 +56,8 @@ const initialApiPreferences = {
   requireRotationNotice: true,
 };
 
+const settingsPersistenceEnabled = false;
+
 const initialApiKeys = [
   { id: "key-1", name: "SOC automation", scope: "Read / alerts / reports", preview: "ftx_live_9d82••••••a4c1", lastUsed: "2026-04-18", status: "Active" },
   { id: "key-2", name: "GRC reporting", scope: "Read / exports", preview: "ftx_live_1f23••••••b884", lastUsed: "2026-04-12", status: "Active" },
@@ -87,7 +89,7 @@ export default function SettingsPage() {
   const [notifications, setNotifications] = useState(initialNotifications);
   const [integrations, setIntegrations] = useState(initialIntegrations);
   const [apiPreferences, setApiPreferences] = useState(initialApiPreferences);
-  const [apiKeys, setApiKeys] = useState(initialApiKeys);
+  const [apiKeys] = useState(initialApiKeys);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [saveState, setSaveState] = useState<Record<SettingsTab, SaveState>>({
     profile: "idle",
@@ -120,6 +122,7 @@ export default function SettingsPage() {
   };
 
   const saveCurrentTab = () => {
+    if (!settingsPersistenceEnabled) return;
     if (!currentIsDirty) return;
 
     setSaveState((current) => ({ ...current, [activeTab]: "saving" }));
@@ -137,20 +140,14 @@ export default function SettingsPage() {
     setSaveState((current) => ({ ...current, [activeTab]: "idle" }));
   };
 
-  const copyKey = async (id: string, preview: string) => {
-    await navigator.clipboard.writeText(preview);
+  const copyKey = (id: string) => {
     setCopiedKey(id);
     window.setTimeout(() => setCopiedKey(null), 1200);
   };
 
   const rotateKey = (id: string) => {
-    setApiKeys((currentKeys) =>
-      currentKeys.map((key) =>
-        key.id === id
-          ? { ...key, preview: `${key.preview.slice(0, 12)}••••rot`, lastUsed: "Just now" }
-          : key
-      )
-    );
+    setCopiedKey(id);
+    window.setTimeout(() => setCopiedKey(null), 1200);
   };
 
   return (
@@ -161,11 +158,19 @@ export default function SettingsPage() {
         actions={
           <Button
             onClick={saveCurrentTab}
-            disabled={!currentIsDirty || currentSaveState === "saving"}
+            disabled={
+              !settingsPersistenceEnabled ||
+              !currentIsDirty ||
+              currentSaveState === "saving"
+            }
             className="gradient-accent border-0 text-white disabled:cursor-not-allowed disabled:opacity-60"
           >
             <Save className="mr-2 h-4 w-4" />
-            {currentSaveState === "saving" ? "Saving..." : `Save ${currentTabMeta.label}`}
+            {!settingsPersistenceEnabled
+              ? "Read-only preview"
+              : currentSaveState === "saving"
+                ? "Saving..."
+                : `Save ${currentTabMeta.label}`}
           </Button>
         }
       />
@@ -208,7 +213,9 @@ export default function SettingsPage() {
                 <p className={`${currentIsDirty ? "text-amber-600 dark:text-amber-400" : "text-[#6B7280] dark:text-[#94A3B8]"}`}>
                   {currentSaveState === "saved"
                     ? "Saved locally for this session"
-                    : currentIsDirty
+                    : !settingsPersistenceEnabled
+                      ? "Server persistence pending"
+                      : currentIsDirty
                       ? "Unsaved changes"
                       : "Up to date"}
                 </p>
@@ -348,7 +355,7 @@ export default function SettingsPage() {
                       </div>
                       <div>
                         <p className="font-medium text-[#1A1A2E] dark:text-[#fafafa]">Token Policies</p>
-                        <p className="text-xs text-[#6B7280] dark:text-[#94A3B8]">Local preferences for issuing and rotating service credentials.</p>
+                        <p className="text-xs text-[#6B7280] dark:text-[#94A3B8]">Planned policies for issuing and rotating service credentials.</p>
                       </div>
                     </div>
                     <div className="space-y-3">
@@ -370,7 +377,7 @@ export default function SettingsPage() {
                       </div>
                       <div>
                         <p className="font-medium text-[#1A1A2E] dark:text-[#fafafa]">Governance</p>
-                        <p className="text-xs text-[#6B7280] dark:text-[#94A3B8]">Keys are scoped to read-only integrations by default in this mock environment.</p>
+                        <p className="text-xs text-[#6B7280] dark:text-[#94A3B8]">Token issuance is disabled until the backend API-key service is implemented.</p>
                       </div>
                     </div>
                     <p className="text-xs leading-relaxed text-[#6B7280] dark:text-[#94A3B8]">
@@ -399,20 +406,22 @@ export default function SettingsPage() {
                             type="button"
                             variant="outline"
                             size="sm"
-                            onClick={() => copyKey(key.id, key.preview)}
+                            onClick={() => copyKey(key.id)}
+                            disabled
                             className="border-[#E9ECEF] bg-[#F9FAFB] text-[#6B7280] hover:bg-[#EFF6FF] hover:text-[#0C5CAB] dark:border-[#27272a] dark:bg-[#1a1a22] dark:text-[#94A3B8] dark:hover:bg-[#27272a] dark:hover:text-[#60A5FA]"
                           >
                             <Copy className="mr-1.5 h-3.5 w-3.5" />
-                            {copiedKey === key.id ? "Copied" : "Copy"}
+                            {copiedKey === key.id ? "Unavailable" : "Copy disabled"}
                           </Button>
                           <Button
                             type="button"
                             variant="outline"
                             size="sm"
                             onClick={() => rotateKey(key.id)}
+                            disabled
                             className="border-[#E9ECEF] bg-[#F9FAFB] text-[#6B7280] hover:bg-[#EFF6FF] hover:text-[#0C5CAB] dark:border-[#27272a] dark:bg-[#1a1a22] dark:text-[#94A3B8] dark:hover:bg-[#27272a] dark:hover:text-[#60A5FA]"
                           >
-                            <RefreshCw className="mr-1.5 h-3.5 w-3.5" /> Rotate
+                            <RefreshCw className="mr-1.5 h-3.5 w-3.5" /> Rotate disabled
                           </Button>
                         </div>
                       </div>
@@ -424,7 +433,11 @@ export default function SettingsPage() {
 
             <div className="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-[#F3F4F6] pt-4 dark:border-[#27272a]">
               <p className="text-xs text-[#6B7280] dark:text-[#94A3B8]">
-                {currentIsDirty ? "You have unsaved local changes in this section." : "No pending changes in this section."}
+                {!settingsPersistenceEnabled
+                  ? "Settings persistence and API-key issuance are not enabled yet."
+                  : currentIsDirty
+                    ? "You have unsaved local changes in this section."
+                    : "No pending changes in this section."}
               </p>
               <div className="flex gap-2">
                 <Button
@@ -439,11 +452,19 @@ export default function SettingsPage() {
                 <Button
                   type="button"
                   onClick={saveCurrentTab}
-                  disabled={!currentIsDirty || currentSaveState === "saving"}
+                  disabled={
+                    !settingsPersistenceEnabled ||
+                    !currentIsDirty ||
+                    currentSaveState === "saving"
+                  }
                   className="gradient-accent border-0 text-white disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   <Save className="mr-2 h-4 w-4" />
-                  {currentSaveState === "saving" ? "Saving..." : "Save changes"}
+                  {!settingsPersistenceEnabled
+                    ? "Read-only preview"
+                    : currentSaveState === "saving"
+                      ? "Saving..."
+                      : "Save changes"}
                 </Button>
               </div>
             </div>

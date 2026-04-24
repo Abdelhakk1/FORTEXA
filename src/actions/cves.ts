@@ -1,9 +1,10 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { logAuditEvent } from "@/lib/audit";
 import { requirePermission } from "@/lib/auth";
 import { ok, toActionResult, type ActionResult } from "@/lib/errors";
-import { queueCveEnrichment, runCveEnrichment } from "@/lib/services/cve-enrichment";
+import { runCveEnrichment } from "@/lib/services/cve-enrichment";
 
 export async function retryCveEnrichmentAction(input: {
   cveId: string;
@@ -17,33 +18,32 @@ export async function retryCveEnrichmentAction(input: {
   }>
 > {
   try {
-    await requirePermission("cves.enrich");
-
-    const queued = await queueCveEnrichment(input.cveId, {
-      force: input.force ?? true,
-    });
-
-    if (queued.ok) {
-      revalidatePath("/vulnerabilities");
-      revalidatePath(`/vulnerabilities/${input.cveCode}`);
-
-      return ok({
-        cveId: input.cveId,
-        status: queued.data.status,
-        mode: "queued",
-      });
-    }
+    const identity = await requirePermission("cves.enrich");
 
     const inline = await runCveEnrichment(input.cveId, {
       force: input.force ?? true,
     });
 
+    revalidatePath("/vulnerabilities");
+    revalidatePath(`/vulnerabilities/${input.cveCode}`);
+
+    await logAuditEvent({
+      userId: identity.profile?.id ?? null,
+      action: inline.ok ? "cve.ai_retry_completed" : "cve.ai_retry_failed",
+      resourceType: "cve",
+      resourceId: input.cveId,
+      details: {
+        cveCode: input.cveCode,
+        force: input.force ?? true,
+        status: inline.ok ? inline.data.status : "failed",
+        code: inline.ok ? "ok" : inline.code,
+        message: inline.ok ? null : inline.message.slice(0, 240),
+      },
+    });
+
     if (!inline.ok) {
       return inline;
     }
-
-    revalidatePath("/vulnerabilities");
-    revalidatePath(`/vulnerabilities/${input.cveCode}`);
 
     return ok({
       cveId: input.cveId,

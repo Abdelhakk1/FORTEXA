@@ -124,7 +124,7 @@ export default function AssetDetailClient({ data }: { data: AssetDetailData }) {
           <Card className="p-5 border border-[#E9ECEF] bg-white dark:border-[#27272a] dark:bg-[#0f0f13]">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-sm font-semibold text-[#1A1A2E] dark:text-[#fafafa]">Linked Vulnerabilities ({asset.vulnerabilityCount})</h3>
-              <Link href="/vulnerabilities" className="text-xs text-[#1B4332] font-medium hover:text-[#1B4332]-hover flex items-center gap-1 cursor-pointer">
+              <Link href="/vulnerabilities" prefetch={false} className="text-xs text-[#1B4332] font-medium hover:text-[#1B4332]-hover flex items-center gap-1 cursor-pointer">
                 View All <ArrowRight className="h-3 w-3" />
               </Link>
             </div>
@@ -142,12 +142,12 @@ export default function AssetDetailClient({ data }: { data: AssetDetailData }) {
                 <tbody>
                   {assetVulns.map(v => (
                     <tr key={v.id} className="dark-table-row border-b border-[#F3F4F6] last:border-0 dark:border-[#27272a] hover:bg-[#F9FAFB] dark:hover:bg-[#1a1a22]/50">
-                      <td className="py-2.5 px-3"><Link href={`/vulnerabilities/${v.id}`} className="text-[#1B4332] font-semibold hover:text-[#1B4332]-hover cursor-pointer text-sm">{v.cveId}</Link></td>
+                      <td className="py-2.5 px-3"><Link href={`/vulnerabilities/${v.id}`} prefetch={false} className="text-[#1B4332] font-semibold hover:text-[#1B4332]-hover cursor-pointer text-sm">{v.cveId}</Link></td>
                       <td className="py-2.5 px-3"><SeverityBadge severity={v.severity} score={v.cvssScore} /></td>
                       <td className="py-2.5 px-3"><PriorityBadge priority={v.businessPriority} /></td>
                       <td className="py-2.5 px-3"><SlaBadge status={v.slaStatus} /></td>
                       <td className="py-2.5 px-3 text-center">
-                        <Link href={`/vulnerabilities/${v.id}`}><Button variant="ghost" size="sm" className="h-7 w-7 p-0 cursor-pointer text-[#6B7280] hover:text-[#1A1A2E] dark:text-[#fafafa] hover:bg-[#F0FDF4] dark:hover:bg-[#1a1a22]"><Eye className="h-4 w-4" /></Button></Link>
+                        <Link href={`/vulnerabilities/${v.id}`} prefetch={false}><Button variant="ghost" size="sm" className="h-7 w-7 p-0 cursor-pointer text-[#6B7280] hover:text-[#1A1A2E] dark:text-[#fafafa] hover:bg-[#F0FDF4] dark:hover:bg-[#1a1a22]"><Eye className="h-4 w-4" /></Button></Link>
                       </td>
                     </tr>
                   ))}
@@ -187,7 +187,7 @@ export default function AssetDetailClient({ data }: { data: AssetDetailData }) {
             <h3 className="text-sm font-semibold text-[#1A1A2E] dark:text-[#fafafa] mb-4">Scan History</h3>
             <div className="space-y-3">
               {assetScans.map(scan => (
-                <Link key={scan.id} href={`/scan-import/${scan.id}`} className="flex items-center gap-3 p-2 rounded-lg hover:bg-[#F0FDF4] dark:hover:bg-[#1a1a22] transition-colors cursor-pointer">
+                <Link key={scan.id} href={`/scan-import/${scan.id}`} prefetch={false} className="flex items-center gap-3 p-2 rounded-lg hover:bg-[#F0FDF4] dark:hover:bg-[#1a1a22] transition-colors cursor-pointer">
                   <div className="flex h-8 w-8 items-center justify-center rounded bg-blue-50 text-blue-600 text-xs font-bold shrink-0">{scan.scannerSource.substring(0, 2)}</div>
                   <div className="min-w-0">
                     <p className="text-sm font-medium truncate text-[#1A1A2E] dark:text-[#fafafa]">{scan.scannerSource}</p>

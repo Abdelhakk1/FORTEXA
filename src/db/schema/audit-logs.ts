@@ -67,8 +67,8 @@ export const auditLogs = pgTable(
     /** The type of resource affected, e.g. "asset", "cve", "alert". */
     resourceType: text("resource_type").notNull(),
 
-    /** The UUID of the affected resource. */
-    resourceId: uuid("resource_id").notNull(),
+    /** Resource identifier. UUIDs are common, but import and system events may use stable text IDs. */
+    resourceId: text("resource_id").notNull(),
 
     /**
      * Flexible payload for additional context.
