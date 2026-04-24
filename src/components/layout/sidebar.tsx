@@ -1,5 +1,4 @@
 "use client";
-
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
@@ -89,6 +88,7 @@ function SidebarContent({
                   <li key={item.href}>
                     <Link
                       href={item.href}
+                      prefetch={false}
                       onClick={onNavigate}
                       aria-current={isActive ? "page" : undefined}
                       className={cn(
@@ -129,6 +129,7 @@ function SidebarContent({
           </p>
           <Link
             href="/scan-import"
+            prefetch={false}
             onClick={onNavigate}
             className="flex items-center justify-center gap-1.5 bg-white/20 hover:bg-white/30 text-white text-xs font-semibold rounded-lg py-2 px-3 transition-colors w-full cursor-pointer backdrop-blur-sm"
           >

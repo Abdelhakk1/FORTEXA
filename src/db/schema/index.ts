@@ -24,6 +24,8 @@ export { assets } from "./assets";
 export { cves } from "./cves";
 export { cveEnrichments } from "./cve-enrichments";
 export { assetVulnerabilities } from "./asset-vulnerabilities";
+export { assetVulnerabilityEvents } from "./asset-vulnerability-events";
+export { assetVulnerabilityEnrichments } from "./asset-vulnerability-enrichments";
 export { scanImports } from "./scan-imports";
 export { scanFindings } from "./scan-findings";
 export { remediationTasks } from "./remediation-tasks";

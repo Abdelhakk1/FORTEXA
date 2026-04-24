@@ -7,6 +7,15 @@ export type AlertStatus = "New" | "Acknowledged" | "In Progress" | "Resolved" | 
 export type ImportStatus = "Completed" | "Processing" | "Failed" | "Partial";
 export type ExploitMaturity = "Active in Wild (KEV)" | "POC Available" | "Theoretical" | "None";
 export type EnrichmentStatus = "Pending" | "Processing" | "Completed" | "Failed";
+export type VulnerabilityStatus =
+  | "New"
+  | "Open"
+  | "Mitigated"
+  | "Closed"
+  | "Reopened"
+  | "Accepted Risk"
+  | "False Positive"
+  | "Compensating Control";
 
 // ─── Assets ────────────────────────────────────────────────────────
 export interface Asset {
@@ -45,7 +54,7 @@ export interface Vulnerability {
   affectedAssetsCount: number;
   patchAvailable: boolean;
   aiRemediationAvailable: boolean;
-  status: "Open" | "Mitigated" | "Closed";
+  status: VulnerabilityStatus;
   firstSeen: string;
   lastSeen: string;
   slaDue: string;
@@ -114,10 +123,24 @@ export interface ScanImport {
   findingsFound: number;
   cvesLinked: number;
   newAssets: number;
+  matchedAssets: number;
+  newFindings: number;
+  fixedFindings: number;
+  reopenedFindings: number;
+  unchangedFindings: number;
+  lowConfidenceMatches: number;
   newVulnerabilities: number;
   closedVulnerabilities: number;
   errors: number;
   warnings: number;
+  errorDetails?: {
+    message?: string;
+    code?: string;
+    errorName?: string;
+    causeCode?: string | null;
+    errors?: string[];
+    warnings?: string[];
+  } | null;
   status: ImportStatus;
   processingTime: string;
 }

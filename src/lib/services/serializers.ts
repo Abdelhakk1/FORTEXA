@@ -8,6 +8,7 @@ import type {
   ImportStatus,
   RemediationStatus,
   Severity,
+  VulnerabilityStatus,
 } from "@/lib/types";
 
 const severityMap = {
@@ -56,6 +57,17 @@ const importStatusMap = {
   failed: "Failed",
   partial: "Partial",
 } as const satisfies Record<string, ImportStatus>;
+
+const vulnerabilityStatusMap = {
+  new: "New",
+  open: "Open",
+  mitigated: "Mitigated",
+  closed: "Closed",
+  reopened: "Reopened",
+  accepted: "Accepted Risk",
+  false_positive: "False Positive",
+  compensating_control: "Compensating Control",
+} as const satisfies Record<string, VulnerabilityStatus>;
 
 const exploitMaturityMap = {
   active_in_wild: "Active in Wild (KEV)",
@@ -146,6 +158,15 @@ export function toUiAlertStatus(value: string | null | undefined): AlertStatus {
 
 export function toUiImportStatus(value: string | null | undefined): ImportStatus {
   return importStatusMap[value as keyof typeof importStatusMap] ?? "Processing";
+}
+
+export function toUiVulnerabilityStatus(
+  value: string | null | undefined
+): VulnerabilityStatus {
+  return (
+    vulnerabilityStatusMap[value as keyof typeof vulnerabilityStatusMap] ??
+    "Open"
+  );
 }
 
 export function toUiExploitMaturity(

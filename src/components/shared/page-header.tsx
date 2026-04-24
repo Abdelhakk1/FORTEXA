@@ -21,7 +21,7 @@ export function PageHeader({ title, description, breadcrumbs, actions }: PageHea
               <span key={i} className="flex items-center gap-1.5">
                 {i > 0 && <ChevronRight className="h-3.5 w-3.5 text-[#D1D5DB] dark:text-[#475569]" />}
                 {crumb.href ? (
-                  <Link href={crumb.href} className="hover:text-[#0C5CAB] dark:hover:text-[#60A5FA] transition-colors cursor-pointer">
+                  <Link href={crumb.href} prefetch={false} className="hover:text-[#0C5CAB] dark:hover:text-[#60A5FA] transition-colors cursor-pointer">
                     {crumb.label}
                   </Link>
                 ) : (

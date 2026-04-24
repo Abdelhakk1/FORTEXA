@@ -1,7 +1,13 @@
+import { unstable_noStore as noStore } from "next/cache";
 import { Sidebar } from "@/components/layout/sidebar";
 import { Topbar } from "@/components/layout/topbar";
+import { RouteLiveRefresh } from "@/components/live/route-live-refresh";
 import { requireAuth } from "@/lib/auth";
+import { startServerTiming } from "@/lib/observability/timing";
 import { listRecentAlertActivity } from "@/lib/services/alerts";
+
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 function formatRoleLabel(roleName: string | null) {
   if (!roleName) {
@@ -23,12 +29,33 @@ function getInitials(fullName: string) {
     .join("");
 }
 
+async function loadRecentAlertActivity() {
+  try {
+    return await listRecentAlertActivity(3);
+  } catch {
+    return {
+      unreadCount: 0,
+      alerts: [],
+    };
+  }
+}
+
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
-  const identity = await requireAuth();
-  const alertActivity = await listRecentAlertActivity(3);
+  noStore();
+  const timing = startServerTiming("route.dashboard.layout");
+  const [identity, alertActivity] = await Promise.all([
+    requireAuth(),
+    loadRecentAlertActivity(),
+  ]);
   const fullName = identity.profile?.fullName || identity.user?.email || "Fortexa User";
   const roleLabel = formatRoleLabel(identity.roleName);
   const initials = getInitials(fullName);
+
+  timing.end({
+    unreadCount: alertActivity.unreadCount,
+    recentAlerts: alertActivity.alerts.length,
+    status: identity.status,
+  });
 
   return (
     <div className="flex h-[100dvh] w-full overflow-hidden bg-[#F8F9FA] dark:bg-[#09090b]">
@@ -51,6 +78,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
           id="main-content"
           className="relative flex-1 overflow-y-auto bg-transparent px-4 py-5 outline-none sm:px-5 lg:px-6 lg:py-6"
         >
+          <RouteLiveRefresh />
           {children}
         </main>
       </div>

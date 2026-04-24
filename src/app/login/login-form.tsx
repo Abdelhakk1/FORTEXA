@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import {
   Shield,
   Eye,
@@ -12,6 +12,7 @@ import {
   AlertCircle,
 } from "lucide-react";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { getSafeRedirectPath } from "@/lib/auth/redirects";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -19,11 +20,23 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Card } from "@/components/ui/card";
 
 const emptyMfa = ["", "", "", "", "", ""];
+const AUTH_COOKIE_PATTERN = /(?:^|;\s*)sb-[^=;]+-auth-token(?:\.\d+)?=/;
+
+async function waitForAuthCookie(timeoutMs = 1_500) {
+  const startedAt = Date.now();
+
+  while (!AUTH_COOKIE_PATTERN.test(document.cookie)) {
+    if (Date.now() - startedAt >= timeoutMs) {
+      return;
+    }
+
+    await new Promise((resolve) => window.setTimeout(resolve, 50));
+  }
+}
 
 export function LoginForm() {
-  const router = useRouter();
   const searchParams = useSearchParams();
-  const nextPath = searchParams.get("next") || "/dashboard";
+  const nextPath = getSafeRedirectPath(searchParams.get("next"));
   const supabase = createSupabaseBrowserClient();
 
   const [email, setEmail] = useState("admin@fortexa.com");
@@ -115,8 +128,8 @@ export function LoginForm() {
       return;
     }
 
-    router.push(nextPath);
-    router.refresh();
+    await waitForAuthCookie();
+    window.location.assign(nextPath);
   };
 
   const handleMfaStep = async () => {
@@ -154,8 +167,8 @@ export function LoginForm() {
       return;
     }
 
-    router.push(nextPath);
-    router.refresh();
+    await waitForAuthCookie();
+    window.location.assign(nextPath);
   };
 
   const handleSubmit = async (event: React.FormEvent) => {

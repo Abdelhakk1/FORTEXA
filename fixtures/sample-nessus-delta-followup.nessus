@@ -1,0 +1,67 @@
+<?xml version="1.0"?>
+<NessusClientData_v2>
+  <Report name="FORTEXA Sample Nessus Follow-up Import">
+    <ReportHost name="atm-edge-01.fortexa.local">
+      <HostProperties>
+        <tag name="HOST_START">Wed Apr 22 09:00:00 2026</tag>
+        <tag name="HOST_END">Wed Apr 22 09:02:30 2026</tag>
+        <tag name="host-ip">10.20.1.10</tag>
+        <tag name="host-fqdn">atm-edge-01.fortexa.local</tag>
+        <tag name="hostname">atm-edge-01</tag>
+        <tag name="operating-system">Windows 10 IoT Enterprise LTSC 2021</tag>
+        <tag name="mac-address">00:11:22:33:44:55</tag>
+        <tag name="host-uuid">nessus-host-atm-edge-01</tag>
+      </HostProperties>
+      <ReportItem port="3389" protocol="tcp" severity="3" pluginID="190123" pluginName="Microsoft Outlook Elevation of Privilege" pluginFamily="Windows">
+        <risk_factor>High</risk_factor>
+        <description>Outlook is still missing security fixes for a known privilege escalation issue.</description>
+        <solution>Deploy the latest Outlook security update.</solution>
+        <plugin_output>Outlook build 16.0.10396 remains older than the patched baseline.</plugin_output>
+        <cvss3_base_score>8.8</cvss3_base_score>
+        <cvss3_vector>CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:H/I:H/A:H</cvss3_vector>
+        <cve>CVE-2023-23397</cve>
+      </ReportItem>
+    </ReportHost>
+    <ReportHost name="branch-router-02.fortexa.local">
+      <HostProperties>
+        <tag name="HOST_START">Wed Apr 22 09:00:00 2026</tag>
+        <tag name="HOST_END">Wed Apr 22 09:01:30 2026</tag>
+        <tag name="host-ip">196.20.10.14</tag>
+        <tag name="host-fqdn">branch-router-02.fortexa.local</tag>
+        <tag name="hostname">branch-router-02</tag>
+        <tag name="operating-system">Cisco IOS XE 17.6</tag>
+        <tag name="device-type">router</tag>
+        <tag name="host-uuid">nessus-host-branch-router-02</tag>
+      </HostProperties>
+      <ReportItem port="443" protocol="tcp" severity="4" pluginID="201992" pluginName="Palo Alto PAN-OS GlobalProtect Command Injection" pluginFamily="Firewalls">
+        <risk_factor>Critical</risk_factor>
+        <description>Remote command injection issue is still exposed on the edge appliance.</description>
+        <solution>Upgrade the appliance to a remediated PAN-OS build immediately.</solution>
+        <plugin_output>GlobalProtect portal still responds with a vulnerable fingerprint.</plugin_output>
+        <cvss3_base_score>10.0</cvss3_base_score>
+        <cvss3_vector>CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:H</cvss3_vector>
+        <cve>CVE-2024-3400</cve>
+      </ReportItem>
+    </ReportHost>
+    <ReportHost name="support-terminal-03.fortexa.local">
+      <HostProperties>
+        <tag name="HOST_START">Wed Apr 22 09:00:00 2026</tag>
+        <tag name="HOST_END">Wed Apr 22 09:02:00 2026</tag>
+        <tag name="host-ip">10.20.2.55</tag>
+        <tag name="host-fqdn">support-terminal-03.fortexa.local</tag>
+        <tag name="hostname">support-terminal-03</tag>
+        <tag name="operating-system">Windows 11 Enterprise</tag>
+        <tag name="host-uuid">nessus-host-support-terminal-03</tag>
+      </HostProperties>
+      <ReportItem port="3389" protocol="tcp" severity="3" pluginID="190123" pluginName="Microsoft Outlook Elevation of Privilege" pluginFamily="Windows">
+        <risk_factor>High</risk_factor>
+        <description>Outlook is missing security fixes for a known privilege escalation issue.</description>
+        <solution>Deploy the latest Outlook security update.</solution>
+        <plugin_output>Support terminal is on the same outdated Outlook build family.</plugin_output>
+        <cvss3_base_score>8.8</cvss3_base_score>
+        <cvss3_vector>CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:H/I:H/A:H</cvss3_vector>
+        <cve>CVE-2023-23397</cve>
+      </ReportItem>
+    </ReportHost>
+  </Report>
+</NessusClientData_v2>

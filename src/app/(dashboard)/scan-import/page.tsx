@@ -1,10 +1,13 @@
-import { requireAuth } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
 import { listScanImports } from "@/lib/services/scan-imports";
+import { startServerTiming } from "@/lib/observability/timing";
 import { ScanImportPageClient } from "./scan-import-page-client";
 
 export default async function ScanImportPage() {
-  await requireAuth();
+  const timing = startServerTiming("route.scanImport.page");
+  await requirePermission("scan_imports.read");
   const data = await listScanImports();
+  timing.end({ total: data.imports.total });
 
   return <ScanImportPageClient data={data} />;
 }

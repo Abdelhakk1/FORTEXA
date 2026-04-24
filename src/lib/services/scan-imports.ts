@@ -13,6 +13,7 @@ import {
 } from "@/db/schema";
 import type { ScanImport } from "@/lib/types";
 import { AppError } from "@/lib/errors";
+import { measureServerTiming } from "@/lib/observability/timing";
 import {
   formatDate,
   formatDateTime,
@@ -23,7 +24,7 @@ import {
   toUiScannerSource,
   toUiSeverity,
 } from "./serializers";
-import { buildPaginatedResult, count, desc, getPagination } from "./utils";
+import { buildPaginatedResult, count, desc, getPagination, sql } from "./utils";
 import { createSignedStorageUrl, getFortexaStorageBuckets } from "./storage";
 
 export interface ScanImportListItem extends ScanImport {
@@ -71,12 +72,14 @@ export interface ScanImportDetailData {
   }>;
 }
 
+type ScanImportErrorDetails = NonNullable<ScanImport["errorDetails"]>;
+
 export const createScanImportRecordSchema = z.object({
   name: z.string().trim().min(3).max(255),
   scannerSource: z.literal("nessus"),
   fileName: z.string().trim().min(1).max(255),
   fileSize: z.number().int().nonnegative().optional(),
-  storagePath: z.string().trim().min(1).max(1024),
+  storagePath: z.string().trim().min(1).max(1024).nullable().optional(),
   importedBy: z.string().uuid().nullable().optional(),
 });
 
@@ -84,6 +87,10 @@ function mapScanImportRow(row: {
   scanImport: typeof scanImports.$inferSelect;
   importedByName: string | null;
 }) {
+  const errorDetails = normalizeScanImportErrorDetails(
+    row.scanImport.errorDetails
+  );
+
   return {
     dbId: row.scanImport.id,
     id: row.scanImport.id,
@@ -98,13 +105,47 @@ function mapScanImportRow(row: {
     findingsFound: row.scanImport.findingsFound,
     cvesLinked: row.scanImport.cvesLinked,
     newAssets: row.scanImport.newAssets,
+    matchedAssets: row.scanImport.matchedAssets,
+    newFindings: row.scanImport.newFindings,
+    fixedFindings: row.scanImport.fixedFindings,
+    reopenedFindings: row.scanImport.reopenedFindings,
+    unchangedFindings: row.scanImport.unchangedFindings,
+    lowConfidenceMatches: row.scanImport.lowConfidenceMatches,
     newVulnerabilities: row.scanImport.newVulnerabilities,
     closedVulnerabilities: row.scanImport.closedVulnerabilities,
     errors: row.scanImport.errors,
     warnings: row.scanImport.warnings,
+    errorDetails,
     status: toUiImportStatus(row.scanImport.status),
     processingTime: formatDuration(row.scanImport.processingTimeMs),
   } satisfies ScanImportListItem;
+}
+
+function toStringList(value: unknown) {
+  return Array.isArray(value)
+    ? value.filter((entry): entry is string => typeof entry === "string")
+    : undefined;
+}
+
+function normalizeScanImportErrorDetails(
+  value: Record<string, unknown> | null | undefined
+): ScanImportErrorDetails | null {
+  if (!value) {
+    return null;
+  }
+
+  return {
+    message: typeof value.message === "string" ? value.message : undefined,
+    code: typeof value.code === "string" ? value.code : undefined,
+    errorName:
+      typeof value.errorName === "string" ? value.errorName : undefined,
+    causeCode:
+      typeof value.causeCode === "string" || value.causeCode === null
+        ? value.causeCode
+        : undefined,
+    errors: toStringList(value.errors),
+    warnings: toStringList(value.warnings),
+  };
 }
 
 export async function listScanImports(page = 1, pageSize = 10) {
@@ -124,41 +165,58 @@ export async function listScanImports(page = 1, pageSize = 10) {
   }
 
   try {
-    const [totalRows, rows, summaryRows] = await Promise.all([
-      db.select({ total: count(scanImports.id) }).from(scanImports),
-      db
-        .select({
-          scanImport: scanImports,
-          importedByName: profiles.fullName,
-        })
-        .from(scanImports)
-        .leftJoin(profiles, eq(scanImports.importedBy, profiles.id))
-        .orderBy(desc(scanImports.importDate))
-        .limit(pagination.pageSize)
-        .offset(pagination.offset),
-      db.select().from(scanImports),
-    ]);
+    return await measureServerTiming(
+      "scanImports.list",
+      async () => {
+        const [totalRows, rows, summaryRows] = await Promise.all([
+          db.select({ total: count(scanImports.id) }).from(scanImports),
+          db
+            .select({
+              scanImport: scanImports,
+              importedByName: profiles.fullName,
+            })
+            .from(scanImports)
+            .leftJoin(profiles, eq(scanImports.importedBy, profiles.id))
+            .orderBy(desc(scanImports.importDate))
+            .limit(pagination.pageSize)
+            .offset(pagination.offset),
+          db
+            .select({
+              totalImports: sql<number>`count(*)::int`,
+              totalFindings: sql<number>`coalesce(sum(${scanImports.findingsFound}), 0)::int`,
+              totalAssetsMapped: sql<number>`coalesce(sum(${scanImports.assetsFound}), 0)::int`,
+              averageProcessingTimeMs:
+                sql<number>`coalesce(avg(${scanImports.processingTimeMs}), 0)::int`,
+            })
+            .from(scanImports),
+        ]);
 
-    const totalProcessingTime = summaryRows.reduce(
-      (sum, row) => sum + (row.processingTimeMs ?? 0),
-      0
-    );
+        const summary = summaryRows[0];
 
-    return {
-      imports: buildPaginatedResult(
-        rows.map(mapScanImportRow),
-        totalRows[0]?.total ?? 0,
-        pagination
-      ),
-      summary: {
-        totalImports: summaryRows.length,
-        totalFindings: summaryRows.reduce((sum, row) => sum + row.findingsFound, 0),
-        totalAssetsMapped: summaryRows.reduce((sum, row) => sum + row.assetsFound, 0),
-        averageProcessingTime: formatDuration(
-          summaryRows.length ? Math.round(totalProcessingTime / summaryRows.length) : 0
-        ),
+        return {
+          imports: buildPaginatedResult(
+            rows.map(mapScanImportRow),
+            totalRows[0]?.total ?? 0,
+            pagination
+          ),
+          summary: {
+            totalImports: summary?.totalImports ?? 0,
+            totalFindings: summary?.totalFindings ?? 0,
+            totalAssetsMapped: summary?.totalAssetsMapped ?? 0,
+            averageProcessingTime: formatDuration(
+              summary?.averageProcessingTimeMs ?? 0
+            ),
+          },
+        };
       },
-    };
+      {
+        page: pagination.page,
+        pageSize: pagination.pageSize,
+      },
+      (result) => ({
+        total: result.imports.total,
+      })
+    );
   } catch {
     return {
       imports: buildPaginatedResult<ScanImportListItem>([], 0, pagination),
@@ -199,6 +257,7 @@ export async function createScanImportRecord(
     .values({
       ...parsed.data,
       fileSize: parsed.data.fileSize ?? null,
+      storagePath: parsed.data.storagePath ?? null,
       importedBy: parsed.data.importedBy ?? null,
       status: "processing",
     })
@@ -304,14 +363,23 @@ export async function getScanImportDetail(
     {
       label: "Asset Mapping",
       status:
-        scanImportRow.scanImport.errors > 0 ? "warning" : "complete",
-      detail: `${mappedImport.assetsFound} assets mapped, ${mappedImport.newAssets} newly discovered`,
+        scanImportRow.scanImport.errors > 0 ||
+        scanImportRow.scanImport.lowConfidenceMatches > 0
+          ? "warning"
+          : "complete",
+      detail: `${mappedImport.newAssets} new assets, ${mappedImport.matchedAssets} matched assets, ${mappedImport.lowConfidenceMatches} low-confidence match(es)`,
     },
     {
       label: "CVE Linking",
       status:
         scanImportRow.scanImport.status === "processing" ? "pending" : "complete",
       detail: `${mappedImport.cvesLinked} CVEs linked`,
+    },
+    {
+      label: "Delta Analysis",
+      status:
+        scanImportRow.scanImport.status === "processing" ? "pending" : "complete",
+      detail: `${mappedImport.newFindings} new, ${mappedImport.reopenedFindings} reopened, ${mappedImport.fixedFindings} fixed, ${mappedImport.unchangedFindings} unchanged`,
     },
   ];
 

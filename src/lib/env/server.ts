@@ -16,6 +16,22 @@ function readEnv(value: string | undefined) {
   return trimmed;
 }
 
+function readPositiveIntEnv(value: string | undefined) {
+  const trimmed = readEnv(value);
+
+  if (!trimmed) {
+    return undefined;
+  }
+
+  const parsed = Number.parseInt(trimmed, 10);
+
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return undefined;
+  }
+
+  return parsed;
+}
+
 export const serverEnv = {
   nextPublicSupabaseUrl: readEnv(process.env.NEXT_PUBLIC_SUPABASE_URL),
   nextPublicSupabaseAnonKey: readEnv(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY),
@@ -30,8 +46,16 @@ export const serverEnv = {
   inngestEventKey: readEnv(process.env.INNGEST_EVENT_KEY),
   inngestSigningKey: readEnv(process.env.INNGEST_SIGNING_KEY),
   inngestAppId: readEnv(process.env.INNGEST_APP_ID) ?? "fortexa",
-  geminiApiKey: readEnv(process.env.GEMINI_API_KEY),
-  geminiModel: readEnv(process.env.GEMINI_MODEL) ?? "gemini-2.5-flash",
+  openrouterApiKey: readEnv(process.env.OPENROUTER_API_KEY),
+  openrouterModel:
+    readEnv(process.env.OPENROUTER_MODEL) ??
+    "inclusionai/ling-2.6-flash:free",
+  openrouterFallbackModel: readEnv(process.env.OPENROUTER_FALLBACK_MODEL),
+  openrouterBaseUrl:
+    readEnv(process.env.OPENROUTER_BASE_URL) ??
+    "https://openrouter.ai/api/v1",
+  openrouterTimeoutMs:
+    readPositiveIntEnv(process.env.OPENROUTER_TIMEOUT_MS) ?? 30_000,
   fortexaReportsBucket:
     readEnv(process.env.FORTEXA_REPORTS_BUCKET) ?? "fortexa-reports",
   fortexaScanImportsBucket:
@@ -75,8 +99,8 @@ export function getMissingEnvVars() {
     missing.push("INNGEST_SIGNING_KEY");
   }
 
-  if (!serverEnv.geminiApiKey) {
-    missing.push("GEMINI_API_KEY");
+  if (!serverEnv.openrouterApiKey) {
+    missing.push("OPENROUTER_API_KEY");
   }
 
   return missing;

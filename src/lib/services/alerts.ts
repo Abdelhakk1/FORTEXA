@@ -6,13 +6,14 @@ import { getDb } from "@/db";
 import { alerts, assets, cves, profiles } from "@/db/schema";
 import type { Alert } from "@/lib/types";
 import { AppError } from "@/lib/errors";
+import { measureServerTiming } from "@/lib/observability/timing";
 import {
   formatDate,
   toUiAlertStatus,
   toUiAlertType,
   toUiSeverity,
 } from "./serializers";
-import { buildPaginatedResult, count, desc, getPagination, ilike, or, searchTerm, type SQL } from "./utils";
+import { buildPaginatedResult, count, desc, getPagination, ilike, or, searchTerm, sql, type SQL } from "./utils";
 
 export interface AlertListFilters {
   search?: string;
@@ -111,60 +112,83 @@ export async function listAlerts(filters: AlertListFilters = {}) {
     };
   }
 
-  const where = buildAlertWhere(filters);
+  return measureServerTiming(
+    "alerts.list",
+    async () => {
+      const where = buildAlertWhere(filters);
 
-  const [ownerRows, totalRows, alertRows, summaryRows] = await Promise.all([
-    db
-      .select({
-        id: profiles.id,
-        fullName: profiles.fullName,
-      })
-      .from(profiles)
-      .orderBy(profiles.fullName),
-    db
-      .select({ total: count(alerts.id) })
-      .from(alerts)
-      .leftJoin(assets, eq(alerts.relatedAssetId, assets.id))
-      .where(where),
-    db
-      .select({
-        alert: alerts,
-        assetName: assets.name,
-        assetCode: assets.assetCode,
-        cveCode: cves.cveId,
-        ownerName: profiles.fullName,
-      })
-      .from(alerts)
-      .leftJoin(assets, eq(alerts.relatedAssetId, assets.id))
-      .leftJoin(cves, eq(alerts.relatedCveId, cves.id))
-      .leftJoin(profiles, eq(alerts.ownerId, profiles.id))
-      .where(where)
-      .orderBy(desc(alerts.createdAt))
-      .limit(pagination.pageSize)
-      .offset(pagination.offset),
-    db.select().from(alerts),
-  ]);
+      const [ownerRows, totalRows, alertRows, summaryRows] = await Promise.all([
+        db
+          .select({
+            id: profiles.id,
+            fullName: profiles.fullName,
+          })
+          .from(profiles)
+          .orderBy(profiles.fullName),
+        db
+          .select({ total: count(alerts.id) })
+          .from(alerts)
+          .leftJoin(assets, eq(alerts.relatedAssetId, assets.id))
+          .where(where),
+        db
+          .select({
+            alert: alerts,
+            assetName: assets.name,
+            assetCode: assets.assetCode,
+            cveCode: cves.cveId,
+            ownerName: profiles.fullName,
+          })
+          .from(alerts)
+          .leftJoin(assets, eq(alerts.relatedAssetId, assets.id))
+          .leftJoin(cves, eq(alerts.relatedCveId, cves.id))
+          .leftJoin(profiles, eq(alerts.ownerId, profiles.id))
+          .where(where)
+          .orderBy(desc(alerts.createdAt))
+          .limit(pagination.pageSize)
+          .offset(pagination.offset),
+        db
+          .select({
+            total: sql<number>`count(*)::int`,
+            newCount:
+              sql<number>`count(*) filter (where ${alerts.status} = 'new')::int`,
+            criticalCount:
+              sql<number>`count(*) filter (where ${alerts.severity} = 'critical')::int`,
+            triagedCount:
+              sql<number>`count(*) filter (where ${alerts.status} in ('acknowledged', 'in_progress'))::int`,
+            resolvedCount:
+              sql<number>`count(*) filter (where ${alerts.status} = 'resolved')::int`,
+          })
+          .from(alerts),
+      ]);
 
-  const mapped = alertRows.map(mapAlertRow);
-  const summary = summaryRows.map((row) => row.status);
+      const mapped = alertRows.map(mapAlertRow);
+      const summary = summaryRows[0];
 
-  return {
-    alerts: buildPaginatedResult(
-      mapped,
-      totalRows[0]?.total ?? 0,
-      pagination
-    ),
-    owners: ownerRows,
-    summary: {
-      total: summaryRows.length,
-      newCount: summary.filter((status) => status === "new").length,
-      criticalCount: summaryRows.filter((row) => row.severity === "critical").length,
-      triagedCount: summary.filter(
-        (status) => status === "acknowledged" || status === "in_progress"
-      ).length,
-      resolvedCount: summary.filter((status) => status === "resolved").length,
+      return {
+        alerts: buildPaginatedResult(
+          mapped,
+          totalRows[0]?.total ?? 0,
+          pagination
+        ),
+        owners: ownerRows,
+        summary: {
+          total: summary?.total ?? 0,
+          newCount: summary?.newCount ?? 0,
+          criticalCount: summary?.criticalCount ?? 0,
+          triagedCount: summary?.triagedCount ?? 0,
+          resolvedCount: summary?.resolvedCount ?? 0,
+        },
+      };
     },
-  };
+    {
+      page: pagination.page,
+      pageSize: pagination.pageSize,
+    },
+    (result) => ({
+      total: result.alerts.total,
+      owners: result.owners.length,
+    })
+  );
 }
 
 export async function listRecentAlertActivity(limit = 3) {
@@ -178,27 +202,43 @@ export async function listRecentAlertActivity(limit = 3) {
   }
 
   try {
-    const rows = await db
-      .select({
-        alert: alerts,
-        assetName: assets.name,
-        assetCode: assets.assetCode,
-        cveCode: cves.cveId,
-        ownerName: profiles.fullName,
+    return await measureServerTiming(
+      "alerts.recentActivity",
+      async () => {
+        const [rows, unreadRows] = await Promise.all([
+          db
+            .select({
+              alert: alerts,
+              assetName: assets.name,
+              assetCode: assets.assetCode,
+              cveCode: cves.cveId,
+              ownerName: profiles.fullName,
+            })
+            .from(alerts)
+            .leftJoin(assets, eq(alerts.relatedAssetId, assets.id))
+            .leftJoin(cves, eq(alerts.relatedCveId, cves.id))
+            .leftJoin(profiles, eq(alerts.ownerId, profiles.id))
+            .orderBy(desc(alerts.createdAt))
+            .limit(limit),
+          db
+            .select({
+              unreadCount:
+                sql<number>`count(*) filter (where ${alerts.status} = 'new')::int`,
+            })
+            .from(alerts),
+        ]);
+
+        return {
+          unreadCount: unreadRows[0]?.unreadCount ?? 0,
+          alerts: rows.map(mapAlertRow),
+        };
+      },
+      { limit },
+      (result) => ({
+        unreadCount: result.unreadCount,
+        alerts: result.alerts.length,
       })
-      .from(alerts)
-      .leftJoin(assets, eq(alerts.relatedAssetId, assets.id))
-      .leftJoin(cves, eq(alerts.relatedCveId, cves.id))
-      .leftJoin(profiles, eq(alerts.ownerId, profiles.id))
-      .orderBy(desc(alerts.createdAt))
-      .limit(limit);
-
-    const countRows = await db.select().from(alerts);
-
-    return {
-      unreadCount: countRows.filter((row) => row.status === "new").length,
-      alerts: rows.map(mapAlertRow),
-    };
+    );
   } catch {
     return {
       unreadCount: 0,

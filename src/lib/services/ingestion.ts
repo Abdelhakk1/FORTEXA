@@ -1,11 +1,12 @@
 import "server-only";
 
 import * as Sentry from "@sentry/nextjs";
-import { XMLParser } from "fast-xml-parser";
+import { XMLParser, XMLValidator } from "fast-xml-parser";
 import { and, eq, inArray } from "drizzle-orm";
 import { getDb } from "@/db";
 import {
   alerts,
+  assetVulnerabilityEvents,
   assetVulnerabilities,
   assets,
   cves,
@@ -17,6 +18,8 @@ import {
   scoringPolicies,
 } from "@/db/schema";
 import { AppError } from "@/lib/errors";
+import { inferAssetContext } from "@/lib/services/asset-inference";
+import { queueAssetVulnerabilityEnrichment } from "@/lib/services/asset-vulnerability-enrichment";
 import { queueCveEnrichment } from "@/lib/services/cve-enrichment";
 import { getFortexaStorageBuckets } from "@/lib/services/storage";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
@@ -79,6 +82,7 @@ interface AssetMatchResult {
   asset: AssetRow;
   created: boolean;
   matchMethod: MatchMethod;
+  matchConfidence: number;
 }
 
 interface ImportProcessingResult {
@@ -88,9 +92,17 @@ interface ImportProcessingResult {
   updatedAssets: number;
   createdFindings: number;
   createdVulnerabilities: number;
+  matchedAssets: number;
+  newFindings: number;
+  fixedFindings: number;
+  reopenedFindings: number;
+  unchangedFindings: number;
+  lowConfidenceMatches: number;
   warnings: string[];
   errors: string[];
 }
+
+type AssetVulnerabilityStatus = typeof assetVulnerabilities.$inferSelect.status;
 
 interface CsvImportResult {
   totalRows: number;
@@ -99,13 +111,20 @@ interface CsvImportResult {
   errors: Array<{ rowNumber: number; message: string }>;
 }
 
+interface NormalizedImportError {
+  code: AppError["code"];
+  message: string;
+  name: string;
+  causeCode: string | null;
+}
+
 const privateIpPattern =
   /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[0-1])\.|127\.|169\.254\.)/;
 
 const xmlParser = new XMLParser({
   ignoreAttributes: false,
   attributeNamePrefix: "",
-  textNodeName: "value",
+  textNodeName: "__text",
   parseTagValue: false,
   trimValues: true,
   isArray: (name) =>
@@ -114,6 +133,22 @@ const xmlParser = new XMLParser({
     name === "tag" ||
     name === "cve",
 });
+
+function validateNessusXml(xml: string) {
+  const validation = XMLValidator.validate(xml);
+
+  if (validation !== true) {
+    const detail =
+      validation?.err?.msg && validation.err.line
+        ? `${validation.err.msg} at line ${validation.err.line}, column ${validation.err.col}.`
+        : "The XML document is malformed.";
+
+    throw new AppError(
+      "validation_error",
+      `The Nessus XML could not be parsed: ${detail}`
+    );
+  }
+}
 
 const assetTypePrefixes: Record<AssetType, string> = {
   atm: "ATM",
@@ -189,6 +224,26 @@ function asText(value: unknown) {
     typeof value.value === "string"
   ) {
     const trimmed = value.value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+
+  if (
+    value &&
+    typeof value === "object" &&
+    "__text" in value &&
+    typeof value.__text === "string"
+  ) {
+    const trimmed = value.__text.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+
+  if (
+    value &&
+    typeof value === "object" &&
+    "#text" in value &&
+    typeof value["#text"] === "string"
+  ) {
+    const trimmed = value["#text"].trim();
     return trimmed.length > 0 ? trimmed : null;
   }
 
@@ -507,15 +562,47 @@ function shouldIgnoreFinding(item: Record<string, unknown>, severity: Severity) 
   return false;
 }
 
-function parseNessusXml(xml: string): {
+export function parseNessusXml(xml: string): {
   assets: NormalizedScanAsset[];
   warnings: string[];
 } {
-  const parsed = xmlParser.parse(xml);
+  let parsed: {
+    NessusClientData_v2?: {
+      Report?: {
+        ReportHost?: unknown;
+      };
+      ReportHost?: unknown;
+    };
+  };
+
+  try {
+    validateNessusXml(xml);
+    parsed = xmlParser.parse(xml) as typeof parsed;
+  } catch (error) {
+    if (error instanceof AppError) {
+      throw error;
+    }
+
+    const detail = error instanceof Error ? error.message : "Unknown XML parser error.";
+
+    throw new AppError(
+      "validation_error",
+      `The Nessus XML could not be parsed: ${detail}`
+    );
+  }
+
   const reportHosts = asArray(
     parsed?.NessusClientData_v2?.Report?.ReportHost ??
       parsed?.NessusClientData_v2?.ReportHost
   );
+
+  if (!parsed?.NessusClientData_v2) {
+    throw new AppError(
+      "validation_error",
+      "The uploaded file is not a NessusClientData_v2 export."
+    );
+  }
+
   const warnings: string[] = [];
   const assetsData: NormalizedScanAsset[] = [];
 
@@ -533,7 +620,7 @@ function parseNessusXml(xml: string): {
 
         const tag = entry as Record<string, unknown>;
         const tagName = asText(tag.name);
-        const tagValue = asText(tag.value);
+        const tagValue = asText(tag);
 
         if (tagName && tagValue) {
           acc[tagName] = tagValue;
@@ -587,9 +674,9 @@ function parseNessusXml(xml: string): {
           rawEvidence: buildRawEvidence(item),
           description: asText(item.description),
           solution: asText(item.solution),
-          cveIds: normalizeMultiValue(item.cve).filter((value: string) =>
-            /^CVE-\d{4}-\d+/i.test(value)
-          ),
+          cveIds: normalizeMultiValue(item.cve)
+            .map((value: string) => value.toUpperCase())
+            .filter((value: string) => /^CVE-\d{4}-\d{4,}$/.test(value)),
           cvssScore:
             toNumber(item.cvss3_base_score) ?? toNumber(item.cvss_base_score),
           cvssVector:
@@ -651,6 +738,60 @@ function parseNessusXml(xml: string): {
   return {
     assets: assetsData,
     warnings,
+  };
+}
+
+function errorCauseCode(error: unknown): string | null {
+  if (!error || typeof error !== "object") {
+    return null;
+  }
+
+  const maybeError = error as { code?: unknown; cause?: unknown };
+
+  if (typeof maybeError.code === "string") {
+    return maybeError.code;
+  }
+
+  return errorCauseCode(maybeError.cause);
+}
+
+function sanitizeImportErrorMessage(message: string) {
+  return message
+    .replace(/postgres(?:ql)?:\/\/\S+/gi, "[redacted database url]")
+    .replace(/Bearer\s+[A-Za-z0-9._~+/-]+/gi, "Bearer [redacted]")
+    .replace(/sk-[A-Za-z0-9_-]+/gi, "[redacted key]")
+    .slice(0, 600);
+}
+
+function normalizeImportError(error: unknown): NormalizedImportError {
+  if (error instanceof AppError) {
+    return {
+      code: error.code,
+      message: sanitizeImportErrorMessage(error.message),
+      name: error.name,
+      causeCode: errorCauseCode(error),
+    };
+  }
+
+  const name = error instanceof Error ? error.name : "UnknownError";
+  const rawMessage =
+    error instanceof Error ? error.message : "Unknown import processing error.";
+  const message = sanitizeImportErrorMessage(rawMessage);
+  const causeCode = errorCauseCode(error);
+  const lowerMessage = message.toLowerCase();
+  const code =
+    lowerMessage.includes("timeout") ||
+    lowerMessage.includes("connect") ||
+    causeCode === "CONNECT_TIMEOUT" ||
+    causeCode === "UND_ERR_CONNECT_TIMEOUT"
+      ? "service_unavailable"
+      : "server_error";
+
+  return {
+    code,
+    message: `Nessus import failed: ${message}`,
+    name,
+    causeCode,
   };
 }
 
@@ -775,6 +916,66 @@ function mergeMetadata(
   };
 }
 
+function matchConfidenceForMethod(method: MatchMethod) {
+  switch (method) {
+    case "hostname":
+      return 90;
+    case "ip":
+      return 80;
+    default:
+      return 72;
+  }
+}
+
+function isManualLifecycleStatus(status: AssetVulnerabilityStatus) {
+  return (
+    status === "accepted" ||
+    status === "false_positive" ||
+    status === "compensating_control"
+  );
+}
+
+function shouldAutoCloseStatus(status: AssetVulnerabilityStatus) {
+  return (
+    status === "new" ||
+    status === "open" ||
+    status === "reopened" ||
+    status === "mitigated"
+  );
+}
+
+async function recordAssetVulnerabilityEvent(input: {
+  assetVulnerabilityId: string;
+  eventType: typeof assetVulnerabilityEvents.$inferSelect.eventType;
+  beforeStatus?: AssetVulnerabilityStatus | null;
+  afterStatus?: AssetVulnerabilityStatus | null;
+  riskScore?: number | null;
+  businessPriority?: BusinessPriority | null;
+  scanImportId?: string | null;
+  actorProfileId?: string | null;
+  details?: Record<string, unknown> | null;
+  note?: string | null;
+}) {
+  const db = getDb();
+
+  if (!db) {
+    return;
+  }
+
+  await db.insert(assetVulnerabilityEvents).values({
+    assetVulnerabilityId: input.assetVulnerabilityId,
+    eventType: input.eventType,
+    beforeStatus: input.beforeStatus ?? null,
+    afterStatus: input.afterStatus ?? null,
+    riskScore: input.riskScore ?? null,
+    businessPriority: input.businessPriority ?? null,
+    scanImportId: input.scanImportId ?? null,
+    actorProfileId: input.actorProfileId ?? null,
+    details: input.details ?? null,
+    note: input.note ?? null,
+  });
+}
+
 function findMatchingAsset(existingAssets: AssetRow[], asset: ObservedAsset) {
   const preferredAssetCode = normalizeValue(asset.preferredAssetCode ?? null);
 
@@ -783,7 +984,11 @@ function findMatchingAsset(existingAssets: AssetRow[], asset: ObservedAsset) {
       (row) => normalizeValue(row.assetCode) === preferredAssetCode
     );
     if (direct) {
-      return { asset: direct, matchMethod: "manual" as const };
+      return {
+        asset: direct,
+        matchMethod: "manual" as const,
+        matchConfidence: 99,
+      };
     }
   }
 
@@ -799,7 +1004,11 @@ function findMatchingAsset(existingAssets: AssetRow[], asset: ObservedAsset) {
     );
 
     if (direct) {
-      return { asset: direct, matchMethod: "manual" as const };
+      return {
+        asset: direct,
+        matchMethod: "manual" as const,
+        matchConfidence: 97,
+      };
     }
   }
 
@@ -818,7 +1027,11 @@ function findMatchingAsset(existingAssets: AssetRow[], asset: ObservedAsset) {
     );
 
     if (direct) {
-      return { asset: direct, matchMethod: "hostname" as const };
+      return {
+        asset: direct,
+        matchMethod: "hostname" as const,
+        matchConfidence: 95,
+      };
     }
   }
 
@@ -833,7 +1046,11 @@ function findMatchingAsset(existingAssets: AssetRow[], asset: ObservedAsset) {
     );
 
     if (direct) {
-      return { asset: direct, matchMethod: "hostname" as const };
+      return {
+        asset: direct,
+        matchMethod: "hostname" as const,
+        matchConfidence: 90,
+      };
     }
   }
 
@@ -843,7 +1060,11 @@ function findMatchingAsset(existingAssets: AssetRow[], asset: ObservedAsset) {
     );
 
     if (direct) {
-      return { asset: direct, matchMethod: "ip" as const };
+      return {
+        asset: direct,
+        matchMethod: "ip" as const,
+        matchConfidence: 80,
+      };
     }
   }
 
@@ -860,7 +1081,11 @@ function findMatchingAsset(existingAssets: AssetRow[], asset: ObservedAsset) {
     );
 
     if (direct) {
-      return { asset: direct, matchMethod: "manual" as const };
+      return {
+        asset: direct,
+        matchMethod: "manual" as const,
+        matchConfidence: 72,
+      };
     }
   }
 
@@ -972,6 +1197,20 @@ async function upsertObservedAsset(params: {
   }
 
   const matched = findMatchingAsset(params.existingAssets, params.observedAsset);
+  const inference = inferAssetContext({
+    name: params.observedAsset.name,
+    type: params.observedAsset.type,
+    manufacturer: params.observedAsset.manufacturer,
+    model: params.observedAsset.model,
+    osVersion: params.observedAsset.osVersion,
+    metadata: params.observedAsset.metadata,
+  });
+  const metadata = mergeMetadata(params.observedAsset.metadata, {
+    inference: {
+      ...inference,
+      inferredAt: new Date().toISOString(),
+    },
+  });
 
   if (matched) {
     const [updated] = await db
@@ -995,7 +1234,7 @@ async function upsertObservedAsset(params: {
         ownerId: matched.asset.ownerId ?? params.observedAsset.ownerId,
         status: matched.asset.status,
         lastScanDate: new Date(),
-        metadata: mergeMetadata(matched.asset.metadata, params.observedAsset.metadata),
+        metadata: mergeMetadata(matched.asset.metadata, metadata),
         updatedAt: new Date(),
       })
       .where(eq(assets.id, matched.asset.id))
@@ -1012,6 +1251,7 @@ async function upsertObservedAsset(params: {
       asset: updated,
       created: false,
       matchMethod: matched.matchMethod,
+      matchConfidence: matched.matchConfidence,
     } satisfies AssetMatchResult;
   }
 
@@ -1037,7 +1277,7 @@ async function upsertObservedAsset(params: {
       status: params.observedAsset.status,
       ownerId: params.observedAsset.ownerId,
       lastScanDate: new Date(),
-      metadata: mergeMetadata(null, params.observedAsset.metadata),
+      metadata,
     })
     .returning();
 
@@ -1047,6 +1287,9 @@ async function upsertObservedAsset(params: {
     asset: created,
     created: true,
     matchMethod: params.observedAsset.hostname ? "hostname" : "ip",
+    matchConfidence: matchConfidenceForMethod(
+      params.observedAsset.hostname ? "hostname" : "ip"
+    ),
   } satisfies AssetMatchResult;
 }
 
@@ -1170,7 +1413,8 @@ async function createFindingAlerts(params: {
 }
 
 export async function processScanImport(
-  scanImportId: string
+  scanImportId: string,
+  options: { xmlText?: string; initialWarnings?: string[] } = {}
 ): Promise<ImportProcessingResult> {
   const db = getDb();
 
@@ -1206,9 +1450,18 @@ export async function processScanImport(
       id: scanImport.id,
       status: scanImport.status,
       createdAssets: scanImport.newAssets,
-      updatedAssets: Math.max(scanImport.assetsFound - scanImport.newAssets, 0),
+      updatedAssets:
+        scanImport.matchedAssets ??
+        Math.max(scanImport.assetsFound - scanImport.newAssets, 0),
       createdFindings: scanImport.findingsFound,
       createdVulnerabilities: scanImport.newVulnerabilities,
+      matchedAssets: scanImport.matchedAssets ?? 0,
+      newFindings: scanImport.newFindings ?? scanImport.newVulnerabilities,
+      fixedFindings:
+        scanImport.fixedFindings ?? scanImport.closedVulnerabilities,
+      reopenedFindings: scanImport.reopenedFindings ?? 0,
+      unchangedFindings: scanImport.unchangedFindings ?? 0,
+      lowConfidenceMatches: scanImport.lowConfidenceMatches ?? 0,
       warnings: [],
       errors: [],
     };
@@ -1241,17 +1494,19 @@ export async function processScanImport(
   }
 
   try {
-    if (!scanImport.storagePath) {
+    if (!options.xmlText && !scanImport.storagePath) {
       throw new AppError(
         "validation_error",
         "The scan import record does not have a stored file path."
       );
     }
 
-    const xml = await fetchStorageText(
-      getFortexaStorageBuckets().scanImports,
-      scanImport.storagePath
-    );
+    const xml =
+      options.xmlText ??
+      (await fetchStorageText(
+        getFortexaStorageBuckets().scanImports,
+        scanImport.storagePath!
+      ));
     const parsed = parseNessusXml(xml);
 
     if (parsed.assets.length === 0) {
@@ -1277,14 +1532,22 @@ export async function processScanImport(
     const avMap = new Map(
       existingAssetVulnerabilities.map((row) => [`${row.assetId}:${row.cveId}`, row])
     );
-    const warnings = [...parsed.warnings];
+    const warnings = [...(options.initialWarnings ?? []), ...parsed.warnings];
     const errors: string[] = [];
     let createdAssets = 0;
     let updatedAssets = 0;
+    let matchedAssets = 0;
     let createdFindings = 0;
     let createdVulnerabilities = 0;
+    let newFindings = 0;
+    let fixedFindings = 0;
+    let reopenedFindings = 0;
+    let unchangedFindings = 0;
+    let lowConfidenceMatches = 0;
     let linkedCves = 0;
     const processedAssetIds = new Set<string>();
+    const seenAssetVulnerabilityKeys = new Set<string>();
+    const enrichmentAssetVulnerabilityIds = new Set<string>();
     const enrichmentCveIds = new Set<string>();
 
     for (const entry of parsed.assets) {
@@ -1299,6 +1562,10 @@ export async function processScanImport(
           createdAssets += 1;
         } else {
           updatedAssets += 1;
+          matchedAssets += 1;
+          if (matched.matchConfidence < 85) {
+            lowConfidenceMatches += 1;
+          }
         }
 
         processedAssetIds.add(matched.asset.id);
@@ -1321,7 +1588,7 @@ export async function processScanImport(
             lastSeen: finding.lastSeen,
             matchedAssetId: matched.asset.id,
             matchedCveId: primaryCve ? cveMap.get(primaryCve)?.id ?? null : null,
-            matchConfidence: matched.matchMethod === "hostname" ? 90 : 80,
+            matchConfidence: matched.matchConfidence,
             matchMethod: matched.matchMethod,
             matchNotes:
               finding.cveIds.length > 1
@@ -1341,6 +1608,7 @@ export async function processScanImport(
             enrichmentCveIds.add(cveRow.id);
             linkedCves += 1;
             const key = `${matched.asset.id}:${cveRow.id}`;
+            seenAssetVulnerabilityKeys.add(key);
             const riskScore = calculateRiskScore({
               severity: finding.severity,
               exploitMaturity: finding.exploitMaturity,
@@ -1353,10 +1621,15 @@ export async function processScanImport(
             const existing = avMap.get(key);
 
             if (existing) {
+              const nextStatus =
+                existing.status === "closed" || existing.status === "mitigated"
+                  ? "reopened"
+                  : existing.status;
               const [updated] = await db
                 .update(assetVulnerabilities)
                 .set({
                   lastSeen: finding.lastSeen,
+                  status: nextStatus,
                   riskScore,
                   businessPriority,
                   slaDue,
@@ -1370,14 +1643,51 @@ export async function processScanImport(
                 .returning();
 
               avMap.set(key, updated);
-              await createFindingAlerts({
-                asset: matched.asset,
-                cveId: cveRow.id,
-                assetVulnerabilityId: updated.id,
-                scanImportId,
-                severity: finding.severity,
-                riskScore,
-              });
+              enrichmentAssetVulnerabilityIds.add(updated.id);
+              if (nextStatus === "reopened") {
+                reopenedFindings += 1;
+                await recordAssetVulnerabilityEvent({
+                  assetVulnerabilityId: updated.id,
+                  eventType: "reopened",
+                  beforeStatus: existing.status,
+                  afterStatus: updated.status,
+                  riskScore,
+                  businessPriority,
+                  scanImportId,
+                  details: {
+                    assetCode: matched.asset.assetCode,
+                    cveId: cveRow.cveId,
+                    title: finding.title,
+                  },
+                });
+              } else {
+                unchangedFindings += 1;
+                await recordAssetVulnerabilityEvent({
+                  assetVulnerabilityId: updated.id,
+                  eventType: "unchanged",
+                  beforeStatus: existing.status,
+                  afterStatus: updated.status,
+                  riskScore,
+                  businessPriority,
+                  scanImportId,
+                  details: {
+                    assetCode: matched.asset.assetCode,
+                    cveId: cveRow.cveId,
+                    title: finding.title,
+                    matchConfidence: matched.matchConfidence,
+                  },
+                });
+              }
+              if (!isManualLifecycleStatus(updated.status)) {
+                await createFindingAlerts({
+                  asset: matched.asset,
+                  cveId: cveRow.id,
+                  assetVulnerabilityId: updated.id,
+                  scanImportId,
+                  severity: finding.severity,
+                  riskScore,
+                });
+              }
               continue;
             }
 
@@ -1388,7 +1698,7 @@ export async function processScanImport(
                 cveId: cveRow.id,
                 firstSeen: finding.firstSeen,
                 lastSeen: finding.lastSeen,
-                status: "open",
+                status: "new",
                 businessPriority,
                 riskScore,
                 slaDue,
@@ -1400,7 +1710,23 @@ export async function processScanImport(
               .returning();
 
             avMap.set(key, created);
+            enrichmentAssetVulnerabilityIds.add(created.id);
             createdVulnerabilities += 1;
+            newFindings += 1;
+            await recordAssetVulnerabilityEvent({
+              assetVulnerabilityId: created.id,
+              eventType: "introduced",
+              afterStatus: created.status,
+              riskScore,
+              businessPriority,
+              scanImportId,
+              details: {
+                assetCode: matched.asset.assetCode,
+                cveId: cveRow.cveId,
+                title: finding.title,
+                matchConfidence: matched.matchConfidence,
+              },
+            });
             await createFindingAlerts({
               asset: matched.asset,
               cveId: cveRow.id,
@@ -1421,6 +1747,47 @@ export async function processScanImport(
       }
     }
 
+    for (const existing of existingAssetVulnerabilities) {
+      const key = `${existing.assetId}:${existing.cveId}`;
+
+      if (
+        !processedAssetIds.has(existing.assetId) ||
+        seenAssetVulnerabilityKeys.has(key) ||
+        !shouldAutoCloseStatus(existing.status)
+      ) {
+        continue;
+      }
+
+      const [closed] = await db
+        .update(assetVulnerabilities)
+        .set({
+          status: "closed",
+          slaStatus: buildSlaStatus(existing.slaDue),
+          sourceScanImportId: scanImportId,
+          updatedAt: new Date(),
+        })
+        .where(eq(assetVulnerabilities.id, existing.id))
+        .returning();
+
+      avMap.set(key, closed);
+      fixedFindings += 1;
+      await recordAssetVulnerabilityEvent({
+        assetVulnerabilityId: closed.id,
+        eventType: "fixed",
+        beforeStatus: existing.status,
+        afterStatus: "closed",
+        riskScore: existing.riskScore,
+        businessPriority: existing.businessPriority,
+        scanImportId,
+      });
+    }
+
+    if (lowConfidenceMatches > 0) {
+      warnings.push(
+        `${lowConfidenceMatches} asset match(es) relied on low-confidence correlation and should be reviewed.`
+      );
+    }
+
     const status =
       errors.length > 0 && createdFindings + createdAssets + updatedAssets > 0
         ? "partial"
@@ -1436,8 +1803,14 @@ export async function processScanImport(
         findingsFound: createdFindings,
         cvesLinked: linkedCves,
         newAssets: createdAssets,
+        matchedAssets,
+        newFindings,
+        fixedFindings,
+        reopenedFindings,
+        unchangedFindings,
+        lowConfidenceMatches,
         newVulnerabilities: createdVulnerabilities,
-        closedVulnerabilities: 0,
+        closedVulnerabilities: fixedFindings,
         errors: errors.length,
         warnings: warnings.length,
         processingTimeMs: Date.now() - startedAt,
@@ -1466,6 +1839,24 @@ export async function processScanImport(
       }
     }
 
+    for (const assetVulnerabilityId of enrichmentAssetVulnerabilityIds) {
+      try {
+        const queued = await queueAssetVulnerabilityEnrichment(
+          assetVulnerabilityId
+        );
+        if (!queued.ok) {
+          warnings.push(
+            `AI playbook queue skipped for one asset vulnerability: ${queued.message}`
+          );
+        }
+      } catch (error) {
+        Sentry.captureException(error);
+        warnings.push(
+          "AI playbook queue skipped for one asset vulnerability."
+        );
+      }
+    }
+
     if (warnings.length !== parsed.warnings.length) {
       await db
         .update(scanImports)
@@ -1490,15 +1881,26 @@ export async function processScanImport(
       updatedAssets,
       createdFindings,
       createdVulnerabilities,
+      matchedAssets,
+      newFindings,
+      fixedFindings,
+      reopenedFindings,
+      unchangedFindings,
+      lowConfidenceMatches,
       warnings,
       errors,
     };
   } catch (error) {
     Sentry.captureException(error);
-    const message =
-      error instanceof AppError
-        ? error.message
-        : "The Nessus file could not be processed.";
+    const normalizedError = normalizeImportError(error);
+
+    console.error("[scan-import] processing failed", {
+      scanImportId,
+      code: normalizedError.code,
+      message: normalizedError.message,
+      errorName: normalizedError.name,
+      causeCode: normalizedError.causeCode,
+    });
 
     await db
       .update(scanImports)
@@ -1508,20 +1910,33 @@ export async function processScanImport(
         warnings: 0,
         processingTimeMs: Date.now() - startedAt,
         errorDetails: {
-          message,
+          message: normalizedError.message,
+          code: normalizedError.code,
+          errorName: normalizedError.name,
+          causeCode: normalizedError.causeCode,
           canonicalImporter: "nessus",
         },
       })
       .where(eq(scanImports.id, scanImportId));
-    await createImportFailureAlert({
-      scanImportId,
-      importedBy: scanImport.importedBy ?? null,
-      message,
-    });
 
-    throw error instanceof AppError
-      ? error
-      : new AppError("server_error", message);
+    try {
+      await createImportFailureAlert({
+        scanImportId,
+        importedBy: scanImport.importedBy ?? null,
+        message: normalizedError.message,
+      });
+    } catch (alertError) {
+      Sentry.captureException(alertError);
+      console.error("[scan-import] failure alert skipped", {
+        scanImportId,
+        cause:
+          alertError instanceof Error
+            ? sanitizeImportErrorMessage(alertError.message)
+            : "Unknown alert persistence error.",
+      });
+    }
+
+    throw new AppError(normalizedError.code, normalizedError.message);
   }
 }
 

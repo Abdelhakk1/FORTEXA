@@ -2,6 +2,7 @@ import "server-only";
 
 import * as Sentry from "@sentry/nextjs";
 import { inngest } from "./client";
+import { runAssetVulnerabilityEnrichment } from "@/lib/services/asset-vulnerability-enrichment";
 import { runCveEnrichment } from "@/lib/services/cve-enrichment";
 import { processScanImport } from "@/lib/services/ingestion";
 
@@ -78,6 +79,46 @@ const cveEnrichmentRequested = inngest.createFunction(
   }
 );
 
+const assetVulnerabilityEnrichmentRequested = inngest.createFunction(
+  {
+    id: "asset-vulnerability-enrichment-requested",
+    triggers: [{ event: "asset_vulnerability.enrichment.requested" }],
+  },
+  async ({ event }) => {
+    Sentry.addBreadcrumb({
+      category: "inngest",
+      message: "asset_vulnerability.enrichment.requested",
+      data: event.data,
+      level: "info",
+    });
+
+    const assetVulnerabilityId =
+      typeof event.data.assetVulnerabilityId === "string"
+        ? event.data.assetVulnerabilityId
+        : null;
+
+    if (!assetVulnerabilityId) {
+      return {
+        received: false,
+        kind: "asset-vulnerability-enrichment",
+        reason: "missing_asset_vulnerability_id",
+      };
+    }
+
+    const result = await runAssetVulnerabilityEnrichment(assetVulnerabilityId, {
+      force: Boolean(event.data.force),
+    });
+
+    return {
+      received: true,
+      kind: "asset-vulnerability-enrichment",
+      status: result.ok ? result.data.status : "failed",
+      assetVulnerabilityId,
+      error: result.ok ? null : result.message,
+    };
+  }
+);
+
 const reportGenerationRequested = inngest.createFunction(
   {
     id: "report-generation-requested",
@@ -121,6 +162,7 @@ const notificationDispatchRequested = inngest.createFunction(
 export const inngestFunctions = [
   scanImportRequested,
   cveEnrichmentRequested,
+  assetVulnerabilityEnrichmentRequested,
   reportGenerationRequested,
   notificationDispatchRequested,
 ];

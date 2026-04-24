@@ -1,5 +1,6 @@
-import { requireAuth } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
 import { listAlerts } from "@/lib/services/alerts";
+import { startServerTiming } from "@/lib/observability/timing";
 import { AlertsPageClient } from "./alerts-page-client";
 
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
@@ -13,8 +14,8 @@ export default async function AlertsPage({
 }: {
   searchParams: SearchParams;
 }) {
-  await requireAuth();
-
+  const timing = startServerTiming("route.alerts.page");
+  await requirePermission("alerts.read");
   const params = await searchParams;
   const filters = {
     search: getValue(params.search) ?? "",
@@ -31,6 +32,7 @@ export default async function AlertsPage({
     status: filters.status,
     ownerId: filters.ownerId,
   });
+  timing.end({ total: data.alerts.total });
 
   return <AlertsPageClient data={data} filters={filters} />;
 }

@@ -1,0 +1,152 @@
+import { randomBytes } from "node:crypto";
+import { config as loadEnv } from "dotenv";
+import { createClient } from "@supabase/supabase-js";
+
+loadEnv({ path: ".env.local", quiet: true });
+
+export function getRequiredEnv(name) {
+  const value = process.env[name]?.trim();
+
+  if (!value) {
+    throw new Error(`Missing required environment variable: ${name}`);
+  }
+
+  return value;
+}
+
+function createSupabaseAdminClient() {
+  return createClient(
+    getRequiredEnv("NEXT_PUBLIC_SUPABASE_URL"),
+    getRequiredEnv("SUPABASE_SERVICE_ROLE_KEY"),
+    {
+      auth: {
+        autoRefreshToken: false,
+        persistSession: false,
+      },
+    }
+  );
+}
+
+async function withRetry(label, fn, attempts = 3) {
+  let lastError;
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error;
+
+      if (attempt < attempts) {
+        await new Promise((resolve) => setTimeout(resolve, attempt * 750));
+      }
+    }
+  }
+
+  const message =
+    lastError instanceof Error ? lastError.message : "unknown failure";
+  throw new Error(`${label} failed after ${attempts} attempts: ${message}`);
+}
+
+async function findAuthUserByEmail(supabase, email) {
+  for (let page = 1; page <= 10; page += 1) {
+    const { data, error } = await withRetry("list auth users", () =>
+      supabase.auth.admin.listUsers({
+        page,
+        perPage: 1000,
+      })
+    );
+
+    if (error) {
+      throw error;
+    }
+
+    const user = data.users.find(
+      (candidate) => candidate.email?.toLowerCase() === email.toLowerCase()
+    );
+
+    if (user) {
+      return user;
+    }
+
+    if (data.users.length < 1000) {
+      return null;
+    }
+  }
+
+  return null;
+}
+
+export async function ensureSmokeUser() {
+  const supabase = createSupabaseAdminClient();
+  const email =
+    process.env.FORTEXA_SMOKE_EMAIL?.trim() || "fortexa.smoke@fortexa.local";
+  const password = `Fortexa!${randomBytes(12).toString("hex")}A1`;
+  const existingUser = await findAuthUserByEmail(supabase, email);
+  const userResult = await withRetry("prepare smoke user", () =>
+    existingUser
+      ? supabase.auth.admin.updateUserById(existingUser.id, {
+          password,
+          email_confirm: true,
+        })
+      : supabase.auth.admin.createUser({
+          email,
+          password,
+          email_confirm: true,
+        })
+  );
+
+  if (userResult.error || !userResult.data.user) {
+    throw userResult.error ?? new Error("Failed to create smoke user.");
+  }
+
+  const { data: role, error: roleError } = await withRetry("load admin role", () =>
+    supabase.from("roles").select("id").eq("name", "administrator").single()
+  );
+
+  if (roleError || !role) {
+    throw roleError ?? new Error("Administrator role not found.");
+  }
+
+  const { error: profileError } = await withRetry("upsert smoke profile", () =>
+    supabase.from("profiles").upsert({
+      id: userResult.data.user.id,
+      full_name: "Fortexa Smoke Tester",
+      email,
+      role_id: role.id,
+      status: "active",
+    })
+  );
+
+  if (profileError) {
+    throw profileError;
+  }
+
+  const browserSupabase = createClient(
+    getRequiredEnv("NEXT_PUBLIC_SUPABASE_URL"),
+    getRequiredEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY"),
+    {
+      auth: {
+        autoRefreshToken: false,
+        persistSession: false,
+      },
+    }
+  );
+  const { error: signInError } = await withRetry("verify smoke sign-in", () =>
+    browserSupabase.auth.signInWithPassword({
+      email,
+      password,
+    })
+  );
+
+  if (signInError) {
+    throw signInError;
+  }
+
+  await browserSupabase.auth.signOut();
+
+  return {
+    email,
+    password,
+    userId: userResult.data.user.id,
+  };
+}

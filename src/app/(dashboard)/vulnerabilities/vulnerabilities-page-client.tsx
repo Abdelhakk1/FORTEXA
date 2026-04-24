@@ -304,7 +304,7 @@ export default function VulnerabilitiesPageClient({
     <div>
       <PageHeader
         title="Vulnerability Management"
-        description={`${vulnerabilities.length} CVEs identified across your ATM/GAB fleet`}
+        description={`${vulnerabilities.length} tracked asset-vulnerability records across your ATM/GAB fleet`}
         actions={
           <div className="flex flex-wrap gap-2">
             <div className="flex items-center overflow-hidden rounded-lg border border-[#E9ECEF] dark:border-[#27272a]">
@@ -528,12 +528,12 @@ export default function VulnerabilitiesPageClient({
                 <div key={vulnerability.id} className="rounded-xl border border-[#E9ECEF] p-4 dark:border-[#27272a]">
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
-                      <Link href={`/vulnerabilities/${vulnerability.id}`} className="text-sm font-semibold text-[#0C5CAB] dark:text-[#60A5FA]">
+                      <Link href={`/vulnerabilities/${vulnerability.id}`} prefetch={false} className="text-sm font-semibold text-[#0C5CAB] dark:text-[#60A5FA]">
                         {vulnerability.cveId}
                       </Link>
                       <p className="mt-1 text-sm text-[#1A1A2E] dark:text-[#fafafa]">{vulnerability.title}</p>
                     </div>
-                    <Link href={`/vulnerabilities/${vulnerability.id}`}>
+                    <Link href={`/vulnerabilities/${vulnerability.id}`} prefetch={false}>
                       <Button variant="ghost" size="sm" aria-label={`Open ${vulnerability.cveId}`} className="h-9 w-9 p-0 text-[#6B7280] hover:bg-[#EFF6FF] hover:text-[#0C5CAB] dark:text-[#94A3B8] dark:hover:bg-[#1a1a22] dark:hover:text-[#60A5FA]">
                         <Eye className="h-4 w-4" />
                       </Button>
@@ -564,12 +564,12 @@ export default function VulnerabilitiesPageClient({
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <p className="font-mono text-[11px] text-[#6B7280] dark:text-[#64748B]">{asset.id}</p>
-                      <Link href={`/assets/${asset.id}`} className="mt-1 block text-sm font-semibold text-[#1A1A2E] hover:text-[#0C5CAB] dark:text-[#fafafa] dark:hover:text-[#60A5FA]">
+                      <Link href={`/assets/${asset.id}`} prefetch={false} className="mt-1 block text-sm font-semibold text-[#1A1A2E] hover:text-[#0C5CAB] dark:text-[#fafafa] dark:hover:text-[#60A5FA]">
                         {asset.name}
                       </Link>
                       <p className="text-xs text-[#6B7280] dark:text-[#94A3B8]">{asset.model}</p>
                     </div>
-                    <Link href={`/assets/${asset.id}`}>
+                    <Link href={`/assets/${asset.id}`} prefetch={false}>
                       <Button variant="ghost" size="sm" aria-label={`Open ${asset.name}`} className="h-9 w-9 p-0 text-[#6B7280] hover:bg-[#EFF6FF] hover:text-[#0C5CAB] dark:text-[#94A3B8] dark:hover:bg-[#1a1a22] dark:hover:text-[#60A5FA]">
                         <Eye className="h-4 w-4" />
                       </Button>
@@ -630,7 +630,7 @@ export default function VulnerabilitiesPageClient({
                           aria-sort={cveSortState("affectedAssetsCount") === "asc" ? "ascending" : cveSortState("affectedAssetsCount") === "desc" ? "descending" : "none"}
                           className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-[#6B7280] dark:text-[#94A3B8]"
                         >
-                          {renderSortableHeader("Affected ATMs", () => toggleCveSort("affectedAssetsCount"), cveSortState("affectedAssetsCount"))}
+                          {renderSortableHeader("Assets", () => toggleCveSort("affectedAssetsCount"), cveSortState("affectedAssetsCount"))}
                         </th>
                       )}
                       {visibleCveColumns.kev && <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-[#6B7280] dark:text-[#94A3B8]">KEV</th>}
@@ -657,7 +657,7 @@ export default function VulnerabilitiesPageClient({
                     {paginatedCves.map((vulnerability) => (
                       <tr key={vulnerability.id} className="dark-table-row border-b border-[#F3F4F6] last:border-0 dark:border-[#27272a] hover:bg-[#F9FAFB] dark:hover:bg-[#1a1a22]/50">
                         <td className="px-4 py-3">
-                          <Link href={`/vulnerabilities/${vulnerability.id}`} className="font-semibold text-[#0C5CAB] hover:text-[#0a4a8a] dark:text-[#60A5FA] dark:hover:text-[#93C5FD]">{vulnerability.cveId}</Link>
+                          <Link href={`/vulnerabilities/${vulnerability.id}`} prefetch={false} className="font-semibold text-[#0C5CAB] hover:text-[#0a4a8a] dark:text-[#60A5FA] dark:hover:text-[#93C5FD]">{vulnerability.cveId}</Link>
                           <p className="max-w-[220px] truncate text-xs text-[#6B7280] dark:text-[#64748B]">{vulnerability.title}</p>
                         </td>
                         {visibleCveColumns.severity && <td className="px-4 py-3"><SeverityBadge severity={vulnerability.severity} score={vulnerability.cvssScore} /></td>}
@@ -668,7 +668,7 @@ export default function VulnerabilitiesPageClient({
                         {visibleCveColumns.slaDue && <td className="px-4 py-3"><SlaBadge status={vulnerability.slaStatus} /></td>}
                         {visibleCveColumns.actions && (
                           <td className="px-4 py-3">
-                            <Link href={`/vulnerabilities/${vulnerability.id}`}>
+                            <Link href={`/vulnerabilities/${vulnerability.id}`} prefetch={false}>
                               <Button variant="ghost" size="sm" aria-label={`Open ${vulnerability.cveId}`} className="h-9 w-9 p-0 text-[#6B7280] hover:bg-[#EFF6FF] hover:text-[#0C5CAB] dark:text-[#94A3B8] dark:hover:bg-[#1a1a22] dark:hover:text-[#60A5FA]"><Eye className="h-4 w-4" /></Button>
                             </Link>
                           </td>
@@ -722,7 +722,7 @@ export default function VulnerabilitiesPageClient({
                     {paginatedAssets.map((asset) => (
                       <tr key={asset.id} className="dark-table-row border-b border-[#F3F4F6] last:border-0 dark:border-[#27272a] hover:bg-[#F9FAFB] dark:hover:bg-[#1a1a22]/50">
                         <td className="px-4 py-3">
-                          <Link href={`/assets/${asset.id}`} className="font-semibold text-[#1A1A2E] hover:text-[#0C5CAB] dark:text-[#fafafa] dark:hover:text-[#60A5FA]">{asset.name}</Link>
+                          <Link href={`/assets/${asset.id}`} prefetch={false} className="font-semibold text-[#1A1A2E] hover:text-[#0C5CAB] dark:text-[#fafafa] dark:hover:text-[#60A5FA]">{asset.name}</Link>
                           <p className="text-xs text-[#6B7280] dark:text-[#64748B]">{asset.id} · {asset.model}</p>
                         </td>
                         {visibleAssetColumns.type && <td className="px-4 py-3 text-[#6B7280] dark:text-[#94A3B8]">{asset.type}</td>}
@@ -739,7 +739,7 @@ export default function VulnerabilitiesPageClient({
                         {visibleAssetColumns.riskScore && <td className="px-4 py-3 font-semibold text-[#1A1A2E] dark:text-[#fafafa]">{asset.riskScore}</td>}
                         {visibleAssetColumns.actions && (
                           <td className="px-4 py-3">
-                            <Link href={`/assets/${asset.id}`}>
+                            <Link href={`/assets/${asset.id}`} prefetch={false}>
                               <Button variant="ghost" size="sm" aria-label={`Open ${asset.name}`} className="h-9 w-9 p-0 text-[#6B7280] hover:bg-[#EFF6FF] hover:text-[#0C5CAB] dark:text-[#94A3B8] dark:hover:bg-[#1a1a22] dark:hover:text-[#60A5FA]"><Eye className="h-4 w-4" /></Button>
                             </Link>
                           </td>
