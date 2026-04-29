@@ -129,6 +129,7 @@ function computeTaskSlaStatus(input: {
 }
 
 async function recordTaskEvent(input: {
+  organizationId: string;
   assetVulnerabilityId: string;
   eventType: typeof assetVulnerabilityEvents.$inferSelect.eventType;
   beforeStatus?: typeof assetVulnerabilities.$inferSelect.status | null;
@@ -145,6 +146,7 @@ async function recordTaskEvent(input: {
   }
 
   await db.insert(assetVulnerabilityEvents).values({
+    organizationId: input.organizationId,
     assetVulnerabilityId: input.assetVulnerabilityId,
     eventType: input.eventType,
     beforeStatus: input.beforeStatus ?? null,
@@ -178,8 +180,12 @@ async function syncTaskAlerts(task: typeof remediationTasks.$inferSelect) {
     .set({
       relatedRemediationTaskId: task.id,
     })
-    .where(
-      and(taskScope, isNull(alerts.relatedRemediationTaskId))
+      .where(
+        and(
+          eq(alerts.organizationId, task.organizationId),
+          taskScope,
+          isNull(alerts.relatedRemediationTaskId)
+        )
     );
 
   if (task.status === "assigned" || task.status === "in_progress") {
@@ -190,7 +196,11 @@ async function syncTaskAlerts(task: typeof remediationTasks.$inferSelect) {
         acknowledgedAt: new Date(),
       })
       .where(
-        and(eq(alerts.relatedRemediationTaskId, task.id), eq(alerts.status, "new"))
+        and(
+          eq(alerts.organizationId, task.organizationId),
+          eq(alerts.relatedRemediationTaskId, task.id),
+          eq(alerts.status, "new")
+        )
       );
   }
 
@@ -204,6 +214,7 @@ async function syncTaskAlerts(task: typeof remediationTasks.$inferSelect) {
       .where(
         and(
           eq(alerts.relatedRemediationTaskId, task.id),
+          eq(alerts.organizationId, task.organizationId),
           ne(alerts.status, "resolved"),
           ne(alerts.status, "dismissed")
         )
@@ -211,7 +222,7 @@ async function syncTaskAlerts(task: typeof remediationTasks.$inferSelect) {
   }
 }
 
-export async function listRemediationTasks() {
+export async function listRemediationTasks(organizationId: string) {
   const db = getDb();
 
   if (!db) {
@@ -229,7 +240,11 @@ export async function listRemediationTasks() {
 
   try {
     const [rows, assignableProfiles] = await Promise.all([
-      db.select().from(remediationTasks).orderBy(desc(remediationTasks.updatedAt)),
+      db
+        .select()
+        .from(remediationTasks)
+        .where(eq(remediationTasks.organizationId, organizationId))
+        .orderBy(desc(remediationTasks.updatedAt)),
       db
         .select({
           id: profiles.id,
@@ -275,7 +290,12 @@ export async function listRemediationTasks() {
             .from(assetVulnerabilities)
             .leftJoin(assets, eq(assetVulnerabilities.assetId, assets.id))
             .leftJoin(cves, eq(assetVulnerabilities.cveId, cves.id))
-            .where(inArray(assetVulnerabilities.id, avIds))
+            .where(
+              and(
+                eq(assetVulnerabilities.organizationId, organizationId),
+                inArray(assetVulnerabilities.id, avIds)
+              )
+            )
         : [],
       bulkCveIds.length
         ? db
@@ -292,7 +312,12 @@ export async function listRemediationTasks() {
               cveId: assetVulnerabilities.cveId,
             })
             .from(assetVulnerabilities)
-            .where(inArray(assetVulnerabilities.cveId, bulkCveIds))
+            .where(
+              and(
+                eq(assetVulnerabilities.organizationId, organizationId),
+                inArray(assetVulnerabilities.cveId, bulkCveIds)
+              )
+            )
         : [],
     ]);
 
@@ -402,7 +427,8 @@ export async function listRemediationTasks() {
 
 export async function createRemediationTask(
   input: z.input<typeof createRemediationTaskSchema>,
-  createdBy: string
+  createdBy: string,
+  organizationId: string
 ) {
   const db = getDb();
 
@@ -427,6 +453,7 @@ export async function createRemediationTask(
     .insert(remediationTasks)
     .values({
       ...parsed.data,
+      organizationId,
       description: parsed.data.description || null,
       assetVulnerabilityId: parsed.data.assetVulnerabilityId ?? null,
       cveId: parsed.data.cveId ?? null,
@@ -453,17 +480,24 @@ export async function createRemediationTask(
 
   if (row.assetVulnerabilityId) {
     const [avRow] = await db
-      .select({
-        status: assetVulnerabilities.status,
+        .select({
+          organizationId: assetVulnerabilities.organizationId,
+          status: assetVulnerabilities.status,
         riskScore: assetVulnerabilities.riskScore,
         businessPriority: assetVulnerabilities.businessPriority,
       })
       .from(assetVulnerabilities)
-      .where(eq(assetVulnerabilities.id, row.assetVulnerabilityId))
+      .where(
+        and(
+          eq(assetVulnerabilities.organizationId, organizationId),
+          eq(assetVulnerabilities.id, row.assetVulnerabilityId)
+        )
+      )
       .limit(1);
 
     if (avRow) {
       await recordTaskEvent({
+        organizationId,
         assetVulnerabilityId: row.assetVulnerabilityId,
         eventType: "task_linked",
         beforeStatus: avRow.status,
@@ -483,7 +517,7 @@ export async function createRemediationTask(
   return row;
 }
 
-export async function getRemediationTask(taskId: string) {
+export async function getRemediationTask(organizationId: string, taskId: string) {
   const db = getDb();
 
   if (!db) {
@@ -496,7 +530,12 @@ export async function getRemediationTask(taskId: string) {
   const [row] = await db
     .select()
     .from(remediationTasks)
-    .where(eq(remediationTasks.id, taskId))
+    .where(
+      and(
+        eq(remediationTasks.organizationId, organizationId),
+        eq(remediationTasks.id, taskId)
+      )
+    )
     .limit(1);
 
   if (!row) {
@@ -507,6 +546,7 @@ export async function getRemediationTask(taskId: string) {
 }
 
 export async function updateRemediationTask(
+  organizationId: string,
   input: z.input<typeof updateRemediationTaskSchema>
 ) {
   const db = getDb();
@@ -528,7 +568,7 @@ export async function updateRemediationTask(
     );
   }
 
-  const current = await getRemediationTask(parsed.data.id);
+  const current = await getRemediationTask(organizationId, parsed.data.id);
   const nextStatus = parsed.data.status ?? current.status;
   const nextDueDate =
     parsed.data.dueDate === undefined ? current.dueDate : parsed.data.dueDate;
@@ -560,7 +600,12 @@ export async function updateRemediationTask(
           : parsed.data.changeRequest || null,
       updatedAt: new Date(),
     })
-    .where(eq(remediationTasks.id, parsed.data.id))
+    .where(
+      and(
+        eq(remediationTasks.organizationId, organizationId),
+        eq(remediationTasks.id, parsed.data.id)
+      )
+    )
     .returning();
 
   await syncTaskAlerts(row);
@@ -577,11 +622,17 @@ export async function updateRemediationTask(
         businessPriority: assetVulnerabilities.businessPriority,
       })
       .from(assetVulnerabilities)
-      .where(eq(assetVulnerabilities.id, row.assetVulnerabilityId))
+      .where(
+        and(
+          eq(assetVulnerabilities.organizationId, organizationId),
+          eq(assetVulnerabilities.id, row.assetVulnerabilityId)
+        )
+      )
       .limit(1);
 
     if (avRow) {
       await recordTaskEvent({
+        organizationId,
         assetVulnerabilityId: row.assetVulnerabilityId,
         eventType: "task_completed",
         beforeStatus: avRow.status,
@@ -601,10 +652,11 @@ export async function updateRemediationTask(
 }
 
 export async function updateRemediationStatus(
+  organizationId: string,
   taskId: string,
   status: typeof remediationTasks.$inferSelect.status
 ) {
-  return updateRemediationTask({
+  return updateRemediationTask(organizationId, {
     id: taskId,
     status,
   });

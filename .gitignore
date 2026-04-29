@@ -37,6 +37,11 @@ yarn-error.log*
 # vercel
 .vercel
 
+# graphify generated cache
+graphify-out/cache/
+graphify-out/cost.json
+graphify-out/manifest.json
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts

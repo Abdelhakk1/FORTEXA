@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, useTransition, type ReactNode } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import {
   AlertTriangle,
@@ -10,6 +11,7 @@ import {
   Bug,
   CheckCircle2,
   Clock,
+  Database,
   Monitor,
   Server,
   Upload,
@@ -23,6 +25,8 @@ import {
   SeverityBadge,
   StatusBadge,
 } from "@/components/shared/badges";
+import { Button } from "@/components/ui/button";
+import { seedSampleAssetsAction } from "@/actions/onboarding";
 import type {
   DashboardActivityData,
   DashboardRiskData,
@@ -71,7 +75,10 @@ export function DashboardSummarySection({
 }: {
   data: DashboardSummaryData;
 }) {
+  const router = useRouter();
   const [showCharts, setShowCharts] = useState(false);
+  const [isLoadingSample, startSampleLoad] = useTransition();
+  const [sampleMessage, setSampleMessage] = useState<string | null>(null);
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
@@ -131,7 +138,59 @@ export function DashboardSummarySection({
         />
       </div>
 
-      {showCharts ? (
+      {!data.hasOperationalData ? (
+        <div className="mb-6">
+          {sampleMessage && (
+            <div className="mb-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-200">
+              {sampleMessage}
+            </div>
+          )}
+          <EmptyState
+            icon={Upload}
+            title="No Fortexa operating data yet"
+            description="This dashboard is connected to the live backend and has no assets or scan imports for this organization. Start with scanner evidence, sample data, or CSV inventory."
+            action={
+              <div className="flex flex-wrap justify-center gap-2">
+                <Button
+                  asChild
+                  size="sm"
+                  className="gradient-accent border-0 text-white"
+                >
+                  <Link href="/scan-import" prefetch={false}>
+                    <Upload className="mr-2 h-4 w-4" />
+                    Import Nessus
+                  </Link>
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={isLoadingSample}
+                  onClick={() => {
+                    setSampleMessage(null);
+                    startSampleLoad(async () => {
+                      const result = await seedSampleAssetsAction();
+                      if (!result.ok) {
+                        setSampleMessage(result.message);
+                        return;
+                      }
+                      router.refresh();
+                    });
+                  }}
+                >
+                  <Database className="mr-2 h-4 w-4" />
+                  {isLoadingSample ? "Loading..." : "Use sample data"}
+                </Button>
+                <Button asChild size="sm" variant="outline">
+                  <Link href="/assets" prefetch={false}>
+                    <Server className="mr-2 h-4 w-4" />
+                    Import CSV assets
+                  </Link>
+                </Button>
+              </div>
+            }
+          />
+        </div>
+      ) : showCharts ? (
         <DashboardCharts data={data} />
       ) : (
         <DashboardChartsFallback />

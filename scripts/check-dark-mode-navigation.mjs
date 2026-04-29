@@ -20,7 +20,7 @@ async function signIn(page, credentials) {
   await page.fill("#password", credentials.password);
   await Promise.all([
     page.waitForURL("**/dashboard", { timeout: 30_000 }),
-    page.getByRole("button", { name: /continue/i }).click(),
+    page.locator("form").getByRole("button", { name: /^sign in$/i }).click(),
   ]);
   await page.getByRole("heading", { name: "Security Dashboard", exact: true }).waitFor({
     state: "visible",
@@ -91,6 +91,8 @@ try {
     await navigateAndSample(page, "Assets", "Asset Management"),
     await navigateAndSample(page, "Vulnerabilities", "Vulnerability Management"),
     await navigateAndSample(page, "Remediation", "Remediation"),
+    await navigateAndSample(page, "Reports", "Reports"),
+    await navigateAndSample(page, "Settings", "Settings"),
     await navigateAndSample(page, "Dashboard", "Security Dashboard"),
   ];
   const failed =

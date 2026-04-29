@@ -27,6 +27,7 @@ export const appPermissions = [
   "cves.enrich",
   "reports.read",
   "reports.write",
+  "settings.manage",
   "audit.read",
   "roles.manage",
   "scoring_policies.manage",
@@ -50,6 +51,7 @@ export const rolePermissions: Record<AppRoleName, readonly AppPermission[]> = {
     "cves.read",
     "reports.read",
     "reports.write",
+    "settings.manage",
     "audit.read",
   ],
   security_analyst: [

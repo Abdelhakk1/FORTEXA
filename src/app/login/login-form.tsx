@@ -1,26 +1,29 @@
 "use client";
 
+import Image from "next/image";
 import { useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import {
-  Shield,
+  AlertCircle,
+  ArrowRight,
   Eye,
   EyeOff,
+  Fingerprint,
   Lock,
   Mail,
-  Fingerprint,
-  AlertCircle,
+  ShieldCheck,
 } from "lucide-react";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { getSafeRedirectPath } from "@/lib/auth/redirects";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Card } from "@/components/ui/card";
+
+type AuthMode = "signin" | "signup";
 
 const emptyMfa = ["", "", "", "", "", ""];
 const AUTH_COOKIE_PATTERN = /(?:^|;\s*)sb-[^=;]+-auth-token(?:\.\d+)?=/;
+const passwordMinLength = 8;
 
 async function waitForAuthCookie(timeoutMs = 1_500) {
   const startedAt = Date.now();
@@ -34,23 +37,40 @@ async function waitForAuthCookie(timeoutMs = 1_500) {
   }
 }
 
+function emailLooksValid(value: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
+}
+
 export function LoginForm() {
   const searchParams = useSearchParams();
   const nextPath = getSafeRedirectPath(searchParams.get("next"));
   const supabase = createSupabaseBrowserClient();
 
-  const [email, setEmail] = useState("admin@fortexa.com");
+  const [mode, setMode] = useState<AuthMode>("signin");
+  const [email, setEmail] = useState("");
+  const [fullName, setFullName] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [showMfa, setShowMfa] = useState(false);
   const [mfaDigits, setMfaDigits] = useState(emptyMfa);
   const [factorId, setFactorId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
   const inputRefs = useRef<Array<HTMLInputElement | null>>([]);
 
   const focusInput = (index: number) => {
     inputRefs.current[index]?.focus();
+  };
+
+  const switchMode = (nextMode: AuthMode) => {
+    setMode(nextMode);
+    setError(null);
+    setSuccess(null);
+    setShowMfa(false);
+    setMfaDigits(emptyMfa);
+    setFactorId(null);
   };
 
   const resetMfa = async () => {
@@ -84,9 +104,36 @@ export function LoginForm() {
     }
   };
 
+  const validatePasswordForm = () => {
+    const normalizedEmail = email.trim().toLowerCase();
+
+    if (!emailLooksValid(normalizedEmail)) {
+      setError("Enter a valid work email address.");
+      return null;
+    }
+
+    if (password.length < passwordMinLength) {
+      setError(`Password must be at least ${passwordMinLength} characters.`);
+      return null;
+    }
+
+    if (mode === "signup" && password !== confirmPassword) {
+      setError("Passwords do not match.");
+      return null;
+    }
+
+    return normalizedEmail;
+  };
+
   const handlePasswordStep = async () => {
+    const normalizedEmail = validatePasswordForm();
+
+    if (!normalizedEmail) {
+      return;
+    }
+
     const { error: signInError } = await supabase.auth.signInWithPassword({
-      email,
+      email: normalizedEmail,
       password,
     });
 
@@ -132,6 +179,49 @@ export function LoginForm() {
     window.location.assign(nextPath);
   };
 
+  const handleSignUp = async () => {
+    const normalizedEmail = validatePasswordForm();
+
+    if (!normalizedEmail) {
+      return;
+    }
+
+    const afterSignupPath = nextPath.startsWith("/invite/")
+      ? nextPath
+      : "/onboarding";
+    const redirectTo = `${window.location.origin}/auth/callback?next=${encodeURIComponent(afterSignupPath)}`;
+    const { data, error: signUpError } = await supabase.auth.signUp({
+      email: normalizedEmail,
+      password,
+      options: {
+        emailRedirectTo: redirectTo,
+        data: {
+          full_name: fullName.trim(),
+          product_context: "atm_gab_vulnerability_operations",
+        },
+      },
+    });
+
+    if (signUpError) {
+      setError(signUpError.message);
+      return;
+    }
+
+    if (data.session) {
+      await waitForAuthCookie();
+      window.location.assign(afterSignupPath);
+      return;
+    }
+
+    setPassword("");
+    setConfirmPassword("");
+    setSuccess(
+      nextPath.startsWith("/invite/")
+        ? "Check your email to finish account creation, then Fortexa will reopen this invite."
+        : "Check your email to finish account creation, then Fortexa will open onboarding."
+    );
+  };
+
   const handleMfaStep = async () => {
     const code = mfaDigits.join("");
 
@@ -175,273 +265,268 @@ export function LoginForm() {
     event.preventDefault();
     setLoading(true);
     setError(null);
+    setSuccess(null);
 
     try {
-      if (!showMfa) {
-        await handlePasswordStep();
-      } else {
+      if (showMfa) {
         await handleMfaStep();
+      } else if (mode === "signup") {
+        await handleSignUp();
+      } else {
+        await handlePasswordStep();
       }
     } finally {
       setLoading(false);
     }
   };
 
+  const submitLabel = showMfa
+    ? "Verify code"
+    : mode === "signup"
+      ? "Create account"
+      : "Sign in";
+
   return (
-    <div className="flex min-h-screen bg-[#F8F9FA]">
-      <div className="relative hidden overflow-hidden bg-gradient-to-br from-[#0C0C0F] via-[#0C1222] to-[#131316] lg:flex lg:w-[55%]">
-        <div className="absolute inset-0 opacity-[0.08]">
-          <div
-            className="absolute inset-0"
-            style={{
-              backgroundImage:
-                "linear-gradient(rgba(59,130,246,0.28) 1px, transparent 1px), linear-gradient(90deg, rgba(59,130,246,0.28) 1px, transparent 1px)",
-              backgroundSize: "60px 60px",
-            }}
+    <main
+      id="main-content"
+      className="grid min-h-[100dvh] grid-cols-1 lg:grid-cols-[48fr_52fr]"
+    >
+      <section className="flex items-center justify-center bg-white px-6 py-8 sm:px-10 lg:px-14 xl:px-20">
+        <div className="w-full max-w-[400px]">
+          <Image
+            src="/pics/logo.png"
+            alt="Fortexa"
+            width={180}
+            height={50}
+            className="mb-6 h-auto w-[180px]"
+            priority
           />
-        </div>
 
-        <div className="absolute left-20 top-20 h-32 w-32 rounded-full bg-[#0C5CAB]/18 blur-3xl animate-pulse" />
-        <div
-          className="absolute bottom-32 right-20 h-48 w-48 rounded-full bg-blue-500/10 blur-3xl animate-pulse"
-          style={{ animationDelay: "1s" }}
-        />
-        <div
-          className="absolute left-1/3 top-1/2 h-24 w-24 rounded-full bg-sky-400/10 blur-2xl animate-pulse"
-          style={{ animationDelay: "2s" }}
-        />
-
-        <div className="relative z-10 flex flex-col justify-center px-16 text-white">
-          <div className="mb-10 flex items-center gap-3">
-            <div className="flex h-12 w-12 items-center justify-center rounded-xl gradient-accent glow-brand">
-              <Shield className="h-6 w-6 text-white" />
-            </div>
-            <span className="heading-tight text-3xl font-bold tracking-tight">
-              Forte<span className="text-[#93C5FD]">xa</span>
-            </span>
-          </div>
-
-          <h1 className="heading-tight mb-5 text-4xl font-bold leading-tight">
-            Proactive Vulnerability
-            <br />
-            Management for ATM/GAB
-            <br />
-            <span className="text-[#93C5FD]">Environments</span>
+          <h1 className="text-2xl font-bold leading-tight tracking-tight text-[#1A1A2E]">
+            {mode === "signup" ? "Create your account" : "Sign in"}
           </h1>
-
-          <p className="mb-10 max-w-lg text-base leading-relaxed text-white/72">
-            Intelligent decision-support platform for banking security teams.
-            Import scans, enrich CVEs with AI, prioritize by business context,
-            and track remediation across your entire ATM fleet.
+          <p className="mt-1 text-sm leading-relaxed text-[#6B7280]">
+            {mode === "signup"
+              ? "Start your ATM/GAB security onboarding."
+              : "Access your Fortexa security workspace."}
           </p>
 
-          <div className="grid max-w-md grid-cols-2 gap-4">
-            {[
-              { value: "1,200+", label: "ATMs Monitored" },
-              { value: "4,800+", label: "CVEs Tracked" },
-              { value: "98.5%", label: "SLA Compliance" },
-              { value: "< 4 Days", label: "Avg. MTTR" },
-            ].map((stat) => (
-              <div
-                key={stat.label}
-                className="rounded-xl border border-white/10 bg-white/5 px-4 py-3.5 backdrop-blur-sm"
-              >
-                <p className="text-2xl font-bold text-[#93C5FD]">{stat.value}</p>
-                <p className="mt-0.5 text-xs text-white/65">{stat.label}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div className="absolute bottom-6 left-16 right-16 flex items-center justify-between text-xs text-white/50">
-          <span>© 2026 Fortexa Security Platform</span>
-          <span>Enterprise Banking Solutions</span>
-        </div>
-      </div>
-
-      <div className="flex flex-1 items-center justify-center bg-[#F8F9FA] px-6 py-12">
-        <div className="w-full max-w-[420px]">
-          <div className="mb-8 flex items-center justify-center gap-2.5 lg:hidden">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg gradient-accent">
-              <Shield className="h-5 w-5 text-white" />
+          {!showMfa && (
+            <div className="mt-4 grid grid-cols-2 rounded-xl bg-[#F0F2F5] p-1">
+              {(["signin", "signup"] as const).map((value) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => switchMode(value)}
+                  className={`h-9 rounded-lg text-sm font-semibold transition-all ${
+                    mode === value
+                      ? "bg-white text-[#1A1A2E] shadow-sm"
+                      : "text-[#6B7280] hover:text-[#1A1A2E]"
+                  }`}
+                >
+                  {value === "signin" ? "Sign in" : "Create account"}
+                </button>
+              ))}
             </div>
-            <span className="text-2xl font-bold tracking-tight text-[#1A1A2E]">
-              Forte<span className="text-[#0C5CAB]">xa</span>
-            </span>
-          </div>
+          )}
 
-          <div className="mb-8">
-            <h2 className="heading-tight text-2xl font-bold text-[#1A1A2E]">
-              Welcome back
-            </h2>
-            <p className="mt-1.5 text-sm text-[#6B7280]">
-              Sign in to your Fortexa account
-            </p>
-          </div>
-
-          <Card className="border border-[#E9ECEF] bg-white p-7 shadow-sm">
-            <form onSubmit={handleSubmit} className="space-y-5">
-              {!showMfa ? (
-                <>
-                  <div className="space-y-2">
-                    <Label htmlFor="email" className="text-sm font-medium text-[#374151]">
-                      Email address
-                    </Label>
-                    <div className="relative">
-                      <Mail className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#6B7280]" />
-                      <Input
-                        id="email"
-                        type="email"
-                        placeholder="admin@fortexa.com"
-                        value={email}
-                        onChange={(event) => setEmail(event.target.value)}
-                        className="h-11 border-[#E9ECEF] bg-[#F3F4F6] pl-10 text-[#1A1A2E] placeholder:text-[#9CA3AF] focus:border-[#0C5CAB] focus:ring-[#0C5CAB]/20"
-                        autoComplete="email"
-                        required
-                      />
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between">
-                      <Label htmlFor="password" className="text-sm font-medium text-[#374151]">
-                        Password
-                      </Label>
-                      <button
-                        type="button"
-                        className="text-xs font-medium text-[#0C5CAB] hover:text-[#0a4a8a]"
-                      >
-                        Forgot password?
-                      </button>
-                    </div>
-                    <div className="relative">
-                      <Lock className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#6B7280]" />
-                      <Input
-                        id="password"
-                        type={showPassword ? "text" : "password"}
-                        placeholder="••••••••"
-                        value={password}
-                        onChange={(event) => setPassword(event.target.value)}
-                        className="h-11 border-[#E9ECEF] bg-[#F3F4F6] pl-10 pr-10 text-[#1A1A2E] placeholder:text-[#9CA3AF] focus:border-[#0C5CAB] focus:ring-[#0C5CAB]/20"
-                        autoComplete="current-password"
-                        required
-                      />
-                      <button
-                        type="button"
-                        aria-label={showPassword ? "Hide password" : "Show password"}
-                        onClick={() => setShowPassword((current) => !current)}
-                        className="absolute right-3 top-1/2 -translate-y-1/2 text-[#6B7280] hover:text-[#1A1A2E]"
-                      >
-                        {showPassword ? (
-                          <EyeOff className="h-4 w-4" />
-                        ) : (
-                          <Eye className="h-4 w-4" />
-                        )}
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    <Checkbox
-                      id="remember"
-                      className="data-[state=checked]:border-[#0C5CAB] data-[state=checked]:bg-[#0C5CAB]"
+          <form onSubmit={handleSubmit} className="mt-4 space-y-3">
+            {!showMfa ? (
+              <>
+{mode === "signup" && (
+                  <div className="grid gap-1.5">
+                    <Label htmlFor="full-name">Name</Label>
+                    <Input
+                      id="full-name"
+                      value={fullName}
+                      onChange={(event) => setFullName(event.target.value)}
+                      placeholder="Security lead"
+                      className="h-10 border-[#E5E7EB] bg-white text-[#1A1A2E] placeholder:text-[#6B7280]"
+                      autoComplete="name"
                     />
-                    <Label
-                      htmlFor="remember"
-                      className="cursor-pointer text-sm text-[#6B7280]"
-                    >
-                      Remember me
-                    </Label>
                   </div>
-                </>
-              ) : (
-                <div className="space-y-4">
-                  <div className="mb-2 flex items-center gap-3">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[#DBEAFE] text-[#0C5CAB]">
-                      <Fingerprint className="h-5 w-5" />
-                    </div>
-                    <div>
-                      <p className="text-sm font-semibold text-[#1A1A2E]">
-                        Two-Factor Authentication
-                      </p>
-                      <p className="text-xs text-[#6B7280]">
-                        Enter the 6-digit code from your authenticator app
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex justify-center gap-2">
-                    {mfaDigits.map((digit, index) => (
-                      <Input
-                        key={index}
-                        ref={(element) => {
-                          inputRefs.current[index] = element;
-                        }}
-                        value={digit}
-                        type="text"
-                        inputMode="numeric"
-                        autoComplete={index === 0 ? "one-time-code" : "off"}
-                        maxLength={1}
-                        aria-label={`Verification digit ${index + 1}`}
-                        onChange={(event) =>
-                          handleMfaChange(index, event.target.value)
-                        }
-                        onKeyDown={(event) => handleMfaKeyDown(index, event)}
-                        className="h-12 w-11 border-[#E9ECEF] bg-[#F3F4F6] text-center text-lg font-bold text-[#1A1A2E] focus:border-[#0C5CAB] focus:ring-[#0C5CAB]/20"
-                      />
-                    ))}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={resetMfa}
-                    className="text-xs font-medium text-[#0C5CAB] hover:text-[#0a4a8a]"
-                  >
-                    ← Back to login
-                  </button>
-                </div>
-              )}
-
-              {error ? (
-                <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                  <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-                  <span>{error}</span>
-                </div>
-              ) : null}
-
-              <Button
-                type="submit"
-                disabled={loading}
-                className="glow-brand h-11 w-full font-semibold text-white"
-              >
-                {loading ? (
-                  <span className="flex items-center gap-2">
-                    <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24">
-                      <circle
-                        className="opacity-25"
-                        cx="12"
-                        cy="12"
-                        r="10"
-                        stroke="currentColor"
-                        strokeWidth="4"
-                        fill="none"
-                      />
-                      <path
-                        className="opacity-75"
-                        fill="currentColor"
-                        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-                      />
-                    </svg>
-                    Verifying...
-                  </span>
-                ) : showMfa ? (
-                  "Verify & Sign In"
-                ) : (
-                  "Continue"
                 )}
-              </Button>
-            </form>
-          </Card>
+
+                <div className="grid gap-1.5">
+                  <Label htmlFor="email">Email address</Label>
+                  <div className="relative">
+                    <Mail className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#6B7280]" />
+                    <Input
+                      id="email"
+                      type="email"
+                      value={email}
+                      onChange={(event) => setEmail(event.target.value)}
+                      placeholder="you@company.com"
+                      className="h-10 border-[#E5E7EB] bg-white pl-10 text-[#1A1A2E] placeholder:text-[#6B7280]"
+                      autoComplete="email"
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div className="grid gap-1.5">
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="password">Password</Label>
+                    {mode === "signin" ? (
+                      <button
+                        type="button"
+                        disabled
+                        className="cursor-not-allowed text-xs font-medium text-[#6B7280]"
+                        title="Password recovery is not enabled in this MVP yet."
+                      >
+                        Recovery not enabled
+                      </button>
+                    ) : null}
+                  </div>
+                  <div className="relative">
+                    <Lock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#6B7280]" />
+                    <Input
+                      id="password"
+                      type={showPassword ? "text" : "password"}
+                      value={password}
+                      onChange={(event) => setPassword(event.target.value)}
+                      placeholder="At least 8 characters"
+                      className="h-10 border-[#E5E7EB] bg-white pl-10 pr-10 text-[#1A1A2E] placeholder:text-[#6B7280]"
+                      autoComplete={mode === "signup" ? "new-password" : "current-password"}
+                      required
+                    />
+                    <button
+                      type="button"
+                      aria-label={showPassword ? "Hide password" : "Show password"}
+                      onClick={() => setShowPassword((current) => !current)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-[#6B7280] hover:text-[#1A1A2E]"
+                    >
+                      {showPassword ? (
+                        <EyeOff className="h-4 w-4" />
+                      ) : (
+                        <Eye className="h-4 w-4" />
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                {mode === "signup" && (
+                  <div className="grid gap-1.5">
+                    <Label htmlFor="confirm-password">Confirm password</Label>
+                    <Input
+                      id="confirm-password"
+                      type={showPassword ? "text" : "password"}
+                      value={confirmPassword}
+                      onChange={(event) => setConfirmPassword(event.target.value)}
+                      placeholder="Repeat password"
+                      className="h-10 border-[#E5E7EB] bg-white text-[#1A1A2E] placeholder:text-[#6B7280]"
+                      autoComplete="new-password"
+                      required
+                    />
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="space-y-4">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#DBEAFE] text-[#0C5CAB]">
+                    <Fingerprint className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-semibold text-[#1A1A2E]">
+                      Two-factor authentication
+                    </p>
+                    <p className="text-xs text-[#6B7280]">
+                      Enter the 6-digit code from your authenticator app.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex justify-center gap-2">
+                  {mfaDigits.map((digit, index) => (
+                    <Input
+                      key={index}
+                      ref={(element) => {
+                        inputRefs.current[index] = element;
+                      }}
+                      value={digit}
+                      type="text"
+                      inputMode="numeric"
+                      autoComplete={index === 0 ? "one-time-code" : "off"}
+                      maxLength={1}
+                      aria-label={`Verification digit ${index + 1}`}
+                      onChange={(event) =>
+                        handleMfaChange(index, event.target.value)
+                      }
+                      onKeyDown={(event) => handleMfaKeyDown(index, event)}
+                      className="h-12 w-11 border-[#E5E7EB] bg-white text-center text-lg font-bold text-[#1A1A2E]"
+                    />
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  onClick={resetMfa}
+                  className="text-xs font-semibold text-[#0C5CAB] hover:text-[#0a4a8a]"
+                >
+                  Back to password
+                </button>
+              </div>
+            )}
+
+            {error ? (
+              <div className="flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                <span>{error}</span>
+              </div>
+            ) : null}
+
+            {success ? (
+              <div className="flex items-start gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+                <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0" />
+                <span>{success}</span>
+              </div>
+            ) : null}
+
+            <Button
+              type="submit"
+              disabled={loading}
+              className="h-10 w-full border-0 bg-[#0C5CAB] font-semibold text-white shadow-[0_8px_24px_rgba(12,92,171,0.25)] hover:bg-[#0a4a8a]"
+            >
+              {loading ? "Securing session..." : submitLabel}
+              {!loading && <ArrowRight className="ml-2 h-4 w-4" />}
+            </Button>
+          </form>
+
+          {mode === "signin" && (
+            <p className="mt-3 text-sm text-[#6B7280]">
+              Don&apos;t have an account?{" "}
+              <button
+                type="button"
+                onClick={() => switchMode("signup")}
+                className="font-semibold text-[#0C5CAB] hover:text-[#0a4a8a]"
+              >
+                Sign up
+              </button>
+            </p>
+          )}
+          {mode === "signup" && (
+            <p className="mt-3 text-sm text-[#6B7280]">
+              Already have an account?{" "}
+              <button
+                type="button"
+                onClick={() => switchMode("signin")}
+                className="font-semibold text-[#0C5CAB] hover:text-[#0a4a8a]"
+              >
+                Sign in
+              </button>
+            </p>
+          )}
         </div>
-      </div>
-    </div>
+      </section>
+
+      <section className="relative hidden lg:block">
+        <Image
+          src="/pics/secondPic.png"
+          alt="Fortexa ATM/GAB security platform"
+          fill
+          className="object-cover object-center"
+          priority
+        />
+      </section>
+    </main>
   );
 }

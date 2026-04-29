@@ -65,7 +65,9 @@ function toUiEnrichmentStatus(
   }
 }
 
-export async function getVulnerabilityOverviewData(): Promise<VulnerabilityOverviewData> {
+export async function getVulnerabilityOverviewData(
+  organizationId: string
+): Promise<VulnerabilityOverviewData> {
   const db = getDb();
 
   if (!db) {
@@ -100,7 +102,8 @@ export async function getVulnerabilityOverviewData(): Promise<VulnerabilityOverv
         .leftJoin(
           assetVulnerabilityEnrichments,
           eq(assetVulnerabilities.id, assetVulnerabilityEnrichments.assetVulnerabilityId)
-        );
+        )
+        .where(eq(assetVulnerabilities.organizationId, organizationId));
 
       const vulnerabilities = avDetailRows
         .map((row) => ({

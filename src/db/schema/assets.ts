@@ -5,7 +5,9 @@ import {
   timestamp,
   jsonb,
   index,
+  unique,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 import {
   assetTypeEnum,
   assetStatusEnum,
@@ -14,6 +16,7 @@ import {
 } from "./enums";
 import { regions } from "./regions";
 import { profiles } from "./profiles";
+import { organizations } from "./organizations";
 
 /**
  * Assets
@@ -34,9 +37,12 @@ export const assets = pgTable(
   "assets",
   {
     id: uuid("id").primaryKey().defaultRandom(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
 
-    /** Business identifier, e.g. "ATM-001". Must be unique. */
-    assetCode: text("asset_code").notNull().unique(),
+    /** Business identifier, e.g. "ATM-001". Unique within a workspace. */
+    assetCode: text("asset_code").notNull(),
     name: text("name").notNull(),
     type: assetTypeEnum("type").notNull(),
 
@@ -91,6 +97,12 @@ export const assets = pgTable(
   },
   (table) => [
     // ─── Operational indexes ──────────────────────────────────────────
+    unique("uq_assets_org_asset_code").on(table.organizationId, table.assetCode),
+    index("idx_assets_org").on(table.organizationId),
+    index("idx_assets_org_asset_code").on(table.organizationId, table.assetCode),
+    index("idx_assets_org_ip_not_null")
+      .on(table.organizationId, table.ipAddress)
+      .where(sql`${table.ipAddress} is not null`),
     index("idx_assets_region").on(table.regionId),
     index("idx_assets_type").on(table.type),
     index("idx_assets_status").on(table.status),

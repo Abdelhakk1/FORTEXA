@@ -14,6 +14,7 @@ import {
 import { scanImports } from "./scan-imports";
 import { assets } from "./assets";
 import { cves } from "./cves";
+import { organizations } from "./organizations";
 
 /**
  * Scan Findings
@@ -40,6 +41,9 @@ export const scanFindings = pgTable(
   "scan_findings",
   {
     id: uuid("id").primaryKey().defaultRandom(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
 
     /**
      * FK → scan_imports.id
@@ -107,6 +111,17 @@ export const scanFindings = pgTable(
   },
   (table) => [
     // ─── Operational indexes ──────────────────────────────────────────
+    index("idx_findings_org").on(table.organizationId),
+    index("idx_findings_org_import_last_seen").on(
+      table.organizationId,
+      table.scanImportId,
+      table.lastSeen
+    ),
+    index("idx_findings_org_asset_cve").on(
+      table.organizationId,
+      table.matchedAssetId,
+      table.matchedCveId
+    ),
     index("idx_findings_import").on(table.scanImportId),
     index("idx_findings_status").on(table.status),
     index("idx_findings_asset").on(table.matchedAssetId),

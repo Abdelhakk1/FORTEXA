@@ -1,4 +1,4 @@
-import { requirePermission } from "@/lib/auth";
+import { requireActiveOrganization, requirePermission } from "@/lib/auth";
 import { startServerTiming } from "@/lib/observability/timing";
 import { listRemediationTasks } from "@/lib/services/remediation";
 import { RemediationPageClient } from "./remediation-page-client";
@@ -6,7 +6,8 @@ import { RemediationPageClient } from "./remediation-page-client";
 export default async function RemediationPage() {
   const timing = startServerTiming("route.remediation.page");
   const identity = await requirePermission("remediation.read");
-  const data = await listRemediationTasks();
+  const activeOrganization = await requireActiveOrganization();
+  const data = await listRemediationTasks(activeOrganization.organization.id);
   timing.end({ tasks: data.tasks.length });
 
   return (

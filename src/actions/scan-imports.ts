@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { logAuditEvent } from "@/lib/audit";
-import { requirePermission } from "@/lib/auth";
+import { requireActiveOrganization, requirePermission } from "@/lib/auth";
 import { err, ok, toActionResult, type ActionResult } from "@/lib/errors";
 import { measureServerTiming } from "@/lib/observability/timing";
 import { processScanImport } from "@/lib/services/ingestion";
@@ -55,6 +55,7 @@ export async function createScanImportAction(
     async () => {
       try {
         const identity = await requirePermission("scan_imports.write");
+        const activeOrganization = await requireActiveOrganization();
         const file = formData.get("file");
         const name = String(formData.get("name") ?? "").trim();
         const scannerSource = String(formData.get("scannerSource") ?? "nessus");
@@ -116,9 +117,11 @@ export async function createScanImportAction(
           fileSize: file.size,
           storagePath: upload.ok ? upload.data.path : null,
           importedBy: identity.profile?.id ?? null,
+          organizationId: activeOrganization.organization.id,
         });
 
         await logAuditEvent({
+          organizationId: activeOrganization.organization.id,
           userId: identity.profile?.id ?? null,
           action: "scan_import.created",
           resourceType: "scan_import",
@@ -139,6 +142,7 @@ export async function createScanImportAction(
         });
 
         await logAuditEvent({
+          organizationId: activeOrganization.organization.id,
           userId: identity.profile?.id ?? null,
           action: `scan_import.${processed.status}`,
           resourceType: "scan_import",

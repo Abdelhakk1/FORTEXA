@@ -2,7 +2,7 @@ import { unstable_noStore as noStore } from "next/cache";
 import { Sidebar } from "@/components/layout/sidebar";
 import { Topbar } from "@/components/layout/topbar";
 import { RouteLiveRefresh } from "@/components/live/route-live-refresh";
-import { requireAuth } from "@/lib/auth";
+import { requireAuth, requireCompletedOnboarding } from "@/lib/auth";
 import { startServerTiming } from "@/lib/observability/timing";
 import { listRecentAlertActivity } from "@/lib/services/alerts";
 
@@ -29,9 +29,9 @@ function getInitials(fullName: string) {
     .join("");
 }
 
-async function loadRecentAlertActivity() {
+async function loadRecentAlertActivity(organizationId: string) {
   try {
-    return await listRecentAlertActivity(3);
+    return await listRecentAlertActivity(organizationId, 3);
   } catch {
     return {
       unreadCount: 0,
@@ -43,9 +43,10 @@ async function loadRecentAlertActivity() {
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   noStore();
   const timing = startServerTiming("route.dashboard.layout");
+  const activeOrganization = await requireCompletedOnboarding();
   const [identity, alertActivity] = await Promise.all([
     requireAuth(),
-    loadRecentAlertActivity(),
+    loadRecentAlertActivity(activeOrganization.organization.id),
   ]);
   const fullName = identity.profile?.fullName || identity.user?.email || "Fortexa User";
   const roleLabel = formatRoleLabel(identity.roleName);

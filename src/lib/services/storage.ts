@@ -63,6 +63,48 @@ export async function uploadFileToStorage(params: {
   }
 }
 
+export async function uploadTextToStorage(params: {
+  bucket: string;
+  path: string;
+  text: string;
+  contentType: string;
+}): Promise<ActionResult<StorageUploadResult>> {
+  const admin = createSupabaseAdminClient();
+
+  if (!admin) {
+    return err(
+      "service_unavailable",
+      "SUPABASE_SERVICE_ROLE_KEY is missing. Storage uploads are currently disabled."
+    );
+  }
+
+  try {
+    const buffer = Buffer.from(params.text, "utf8");
+    const { error } = await admin.storage.from(params.bucket).upload(
+      params.path,
+      buffer,
+      {
+        contentType: params.contentType,
+        upsert: false,
+      }
+    );
+
+    if (error) {
+      return err("server_error", error.message);
+    }
+
+    return ok({
+      bucket: params.bucket,
+      path: params.path,
+      fileName: params.path.split("/").at(-1) ?? "report.csv",
+      size: buffer.byteLength,
+    });
+  } catch (error) {
+    Sentry.captureException(error);
+    return err("server_error", "We could not upload the report to Supabase Storage.");
+  }
+}
+
 export async function createSignedStorageUrl(params: {
   bucket: string;
   path: string;

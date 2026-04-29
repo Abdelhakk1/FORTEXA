@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation";
-import { requirePermission } from "@/lib/auth";
+import { requireActiveOrganization, requirePermission } from "@/lib/auth";
 import { getAssetDetail } from "@/lib/services/assets";
 import AssetDetailClient from "./asset-detail-client";
 
@@ -11,8 +11,9 @@ export default async function AssetDetailPage({
   params: Params;
 }) {
   await requirePermission("assets.read");
+  const activeOrganization = await requireActiveOrganization();
   const { id } = await params;
-  const data = await getAssetDetail(id);
+  const data = await getAssetDetail(activeOrganization.organization.id, id);
 
   if (!data) {
     notFound();

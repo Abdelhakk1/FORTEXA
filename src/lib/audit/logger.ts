@@ -5,6 +5,7 @@ import { getDb } from "@/db";
 import { auditLogs } from "@/db/schema";
 
 interface AuditLogInput {
+  organizationId?: string | null;
   userId?: string | null;
   action: string;
   resourceType: string;
@@ -43,6 +44,7 @@ export async function logAuditEvent(input: AuditLogInput) {
   const [row] = await db
     .insert(auditLogs)
     .values({
+      organizationId: input.organizationId ?? null,
       userId: input.userId ?? null,
       action: input.action,
       resourceType: input.resourceType,

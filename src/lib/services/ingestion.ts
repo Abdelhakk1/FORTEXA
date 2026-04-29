@@ -10,6 +10,7 @@ import {
   assetVulnerabilities,
   assets,
   cves,
+  organizationSettings,
   profiles,
   regions,
   reportDefinitions,
@@ -118,6 +119,9 @@ interface NormalizedImportError {
   causeCode: string | null;
 }
 
+const workspaceSchemaNotReadyMessage =
+  "Import failed because the workspace data schema is not ready. Please run migrations and try again.";
+
 const privateIpPattern =
   /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[0-1])\.|127\.|169\.254\.)/;
 
@@ -162,43 +166,36 @@ const assetTypePrefixes: Record<AssetType, string> = {
 
 const defaultReportDefinitions = [
   {
-    name: "Vulnerability Summary",
-    description: "Severity and exposure summary across imported vulnerabilities.",
-    type: "risk_posture" as const,
-    schedule: "On demand",
-    status: "active" as const,
-    config: {
-      sections: ["severity_distribution", "top_vulnerabilities", "recent_imports"],
-    },
-  },
-  {
-    name: "Remediation Status",
-    description: "Open, overdue, and progressing remediation work.",
-    type: "remediation" as const,
-    schedule: "On demand",
-    status: "active" as const,
-    config: {
-      sections: ["open_tasks", "sla_status", "priority_breakdown"],
-    },
-  },
-  {
-    name: "Asset Inventory Summary",
-    description: "Current asset coverage by type, exposure, and region.",
+    name: "Executive Exposure Summary",
+    description: "ATM/GAB exposure summary from real Fortexa data.",
     type: "executive" as const,
     schedule: "On demand",
     status: "active" as const,
     config: {
-      sections: ["inventory_totals", "region_breakdown", "high_exposure_assets"],
+      reportKind: "executive_exposure",
+      sections: ["asset_totals", "critical_high_exposure", "sites", "asset_roles"],
     },
   },
   {
-    name: "Recent Scan Import Summary",
-    description: "Latest ingestion runs, warnings, and created findings.",
+    name: "Latest Scan Delta",
+    description: "Latest Nessus import delta: new, fixed, reopened, unchanged, and low-confidence findings.",
     type: "compliance" as const,
     schedule: "On demand",
     status: "active" as const,
     config: {
-      sections: ["recent_imports", "warnings", "findings_created"],
+      reportKind: "scan_delta",
+      sections: ["latest_import", "finding_delta", "warnings"],
+    },
+  },
+  {
+    name: "Remediation Backlog",
+    description: "Open remediation tasks, owners, priority, SLA status, and due dates.",
+    type: "remediation" as const,
+    schedule: "On demand",
+    status: "active" as const,
+    config: {
+      reportKind: "remediation_backlog",
+      sections: ["open_tasks", "sla_status", "priority_breakdown"],
     },
   },
 ];
@@ -763,6 +760,18 @@ function sanitizeImportErrorMessage(message: string) {
     .slice(0, 600);
 }
 
+function isWorkspaceSchemaMismatch(message: string, causeCode: string | null) {
+  const lowerMessage = message.toLowerCase();
+
+  return (
+    causeCode === "42703" ||
+    (lowerMessage.includes("schema cache") &&
+      lowerMessage.includes("organization_id")) ||
+    (lowerMessage.includes("organization_id") &&
+      lowerMessage.includes("does not exist"))
+  );
+}
+
 function normalizeImportError(error: unknown): NormalizedImportError {
   if (error instanceof AppError) {
     return {
@@ -778,6 +787,16 @@ function normalizeImportError(error: unknown): NormalizedImportError {
     error instanceof Error ? error.message : "Unknown import processing error.";
   const message = sanitizeImportErrorMessage(rawMessage);
   const causeCode = errorCauseCode(error);
+
+  if (isWorkspaceSchemaMismatch(message, causeCode)) {
+    return {
+      code: "service_unavailable",
+      message: workspaceSchemaNotReadyMessage,
+      name,
+      causeCode,
+    };
+  }
+
   const lowerMessage = message.toLowerCase();
   const code =
     lowerMessage.includes("timeout") ||
@@ -945,6 +964,7 @@ function shouldAutoCloseStatus(status: AssetVulnerabilityStatus) {
 }
 
 async function recordAssetVulnerabilityEvent(input: {
+  organizationId: string;
   assetVulnerabilityId: string;
   eventType: typeof assetVulnerabilityEvents.$inferSelect.eventType;
   beforeStatus?: AssetVulnerabilityStatus | null;
@@ -963,6 +983,7 @@ async function recordAssetVulnerabilityEvent(input: {
   }
 
   await db.insert(assetVulnerabilityEvents).values({
+    organizationId: input.organizationId,
     assetVulnerabilityId: input.assetVulnerabilityId,
     eventType: input.eventType,
     beforeStatus: input.beforeStatus ?? null,
@@ -1092,7 +1113,10 @@ function findMatchingAsset(existingAssets: AssetRow[], asset: ObservedAsset) {
   return null;
 }
 
-export async function ensureDefaultReportDefinitions(createdBy: string | null) {
+export async function ensureDefaultReportDefinitions(
+  organizationId: string,
+  createdBy: string | null
+) {
   const db = getDb();
 
   if (!db) {
@@ -1102,6 +1126,7 @@ export async function ensureDefaultReportDefinitions(createdBy: string | null) {
   const [existing] = await db
     .select({ id: reportDefinitions.id })
     .from(reportDefinitions)
+    .where(eq(reportDefinitions.organizationId, organizationId))
     .limit(1);
 
   if (existing) {
@@ -1111,6 +1136,7 @@ export async function ensureDefaultReportDefinitions(createdBy: string | null) {
   await db.insert(reportDefinitions).values(
     defaultReportDefinitions.map((definition) => ({
       ...definition,
+      organizationId,
       createdBy,
     }))
   );
@@ -1183,6 +1209,7 @@ async function ensureCveRows(
 }
 
 async function upsertObservedAsset(params: {
+  organizationId: string;
   existingAssets: AssetRow[];
   observedAsset: ObservedAsset;
   assetCodeGenerator: (type: AssetType) => string;
@@ -1237,7 +1264,7 @@ async function upsertObservedAsset(params: {
         metadata: mergeMetadata(matched.asset.metadata, metadata),
         updatedAt: new Date(),
       })
-      .where(eq(assets.id, matched.asset.id))
+      .where(and(eq(assets.organizationId, params.organizationId), eq(assets.id, matched.asset.id)))
       .returning();
 
     const index = params.existingAssets.findIndex(
@@ -1262,6 +1289,7 @@ async function upsertObservedAsset(params: {
   const [created] = await db
     .insert(assets)
     .values({
+      organizationId: params.organizationId,
       assetCode,
       name: params.observedAsset.name,
       type: params.observedAsset.type,
@@ -1294,6 +1322,7 @@ async function upsertObservedAsset(params: {
 }
 
 async function createImportFailureAlert(params: {
+  organizationId: string;
   scanImportId: string;
   importedBy: string | null;
   message: string;
@@ -1310,6 +1339,7 @@ async function createImportFailureAlert(params: {
     .where(
       and(
         eq(alerts.relatedScanImportId, params.scanImportId),
+        eq(alerts.organizationId, params.organizationId),
         eq(alerts.type, "import_error")
       )
     )
@@ -1320,6 +1350,7 @@ async function createImportFailureAlert(params: {
   }
 
   await db.insert(alerts).values({
+    organizationId: params.organizationId,
     title: "Scan import failed",
     description: params.message,
     type: "import_error",
@@ -1331,6 +1362,7 @@ async function createImportFailureAlert(params: {
 }
 
 async function createFindingAlerts(params: {
+  organizationId: string;
   asset: AssetRow;
   cveId: string | null;
   assetVulnerabilityId: string;
@@ -1360,6 +1392,7 @@ async function createFindingAlerts(params: {
     .where(
       and(
         eq(alerts.relatedAssetVulnerabilityId, params.assetVulnerabilityId),
+        eq(alerts.organizationId, params.organizationId),
         eq(alerts.type, type)
       )
     )
@@ -1367,6 +1400,7 @@ async function createFindingAlerts(params: {
 
   if (!existing) {
     await db.insert(alerts).values({
+      organizationId: params.organizationId,
       title,
       description: `Imported vulnerability on ${params.asset.assetCode} with contextual risk score ${params.riskScore}.`,
       type,
@@ -1390,6 +1424,7 @@ async function createFindingAlerts(params: {
       .where(
         and(
           eq(alerts.relatedAssetVulnerabilityId, params.assetVulnerabilityId),
+          eq(alerts.organizationId, params.organizationId),
           eq(alerts.type, "exposed_asset")
         )
       )
@@ -1397,6 +1432,7 @@ async function createFindingAlerts(params: {
 
     if (!exposed) {
       await db.insert(alerts).values({
+        organizationId: params.organizationId,
         title: `Internet-facing critical asset: ${params.asset.assetCode}`,
         description: `${params.asset.assetCode} is internet-facing and now has an open critical vulnerability.`,
         type: "exposed_asset",
@@ -1436,10 +1472,17 @@ export async function processScanImport(
     throw new AppError("not_found", "Scan import not found.");
   }
 
+  const organizationId = scanImport.organizationId;
+
   const [existingFindings] = await db
     .select({ id: scanFindings.id })
     .from(scanFindings)
-    .where(eq(scanFindings.scanImportId, scanImportId))
+    .where(
+      and(
+        eq(scanFindings.organizationId, organizationId),
+        eq(scanFindings.scanImportId, scanImportId)
+      )
+    )
     .limit(1);
 
   if (
@@ -1485,6 +1528,7 @@ export async function processScanImport(
       })
       .where(eq(scanImports.id, scanImportId));
     await createImportFailureAlert({
+      organizationId,
       scanImportId,
       importedBy: scanImport.importedBy ?? null,
       message,
@@ -1516,17 +1560,27 @@ export async function processScanImport(
       );
     }
 
-    const [existingAssets, existingAssetVulnerabilities, activePolicy] =
+    const [existingAssets, existingAssetVulnerabilities, activePolicy, settings] =
       await Promise.all([
-        db.select().from(assets),
-        db.select().from(assetVulnerabilities),
+        db.select().from(assets).where(eq(assets.organizationId, organizationId)),
+        db
+          .select()
+          .from(assetVulnerabilities)
+          .where(eq(assetVulnerabilities.organizationId, organizationId)),
         db
           .select()
           .from(scoringPolicies)
           .where(eq(scoringPolicies.isActive, true))
           .limit(1)
           .then((rows) => rows[0] ?? null),
+        db
+          .select()
+          .from(organizationSettings)
+          .where(eq(organizationSettings.organizationId, organizationId))
+          .limit(1)
+          .then((rows) => rows[0] ?? null),
       ]);
+    const aiEnabled = Boolean(settings?.aiEnabled && settings.aiConsentAccepted);
 
     const assetCodeGenerator = createAssetCodeGenerator(existingAssets);
     const avMap = new Map(
@@ -1553,6 +1607,7 @@ export async function processScanImport(
     for (const entry of parsed.assets) {
       try {
         const matched = await upsertObservedAsset({
+          organizationId,
           existingAssets,
           observedAsset: entry.asset,
           assetCodeGenerator,
@@ -1576,6 +1631,7 @@ export async function processScanImport(
             finding.cveIds.find((cveId) => cveMap.has(cveId)) ?? null;
 
           await db.insert(scanFindings).values({
+            organizationId,
             scanImportId,
             findingCode: finding.findingCode,
             title: finding.title,
@@ -1639,7 +1695,12 @@ export async function processScanImport(
                   notes: finding.solution ?? existing.notes,
                   updatedAt: new Date(),
                 })
-                .where(eq(assetVulnerabilities.id, existing.id))
+                .where(
+                  and(
+                    eq(assetVulnerabilities.organizationId, organizationId),
+                    eq(assetVulnerabilities.id, existing.id)
+                  )
+                )
                 .returning();
 
               avMap.set(key, updated);
@@ -1647,6 +1708,7 @@ export async function processScanImport(
               if (nextStatus === "reopened") {
                 reopenedFindings += 1;
                 await recordAssetVulnerabilityEvent({
+                  organizationId,
                   assetVulnerabilityId: updated.id,
                   eventType: "reopened",
                   beforeStatus: existing.status,
@@ -1663,6 +1725,7 @@ export async function processScanImport(
               } else {
                 unchangedFindings += 1;
                 await recordAssetVulnerabilityEvent({
+                  organizationId,
                   assetVulnerabilityId: updated.id,
                   eventType: "unchanged",
                   beforeStatus: existing.status,
@@ -1680,6 +1743,7 @@ export async function processScanImport(
               }
               if (!isManualLifecycleStatus(updated.status)) {
                 await createFindingAlerts({
+                  organizationId,
                   asset: matched.asset,
                   cveId: cveRow.id,
                   assetVulnerabilityId: updated.id,
@@ -1694,6 +1758,7 @@ export async function processScanImport(
             const [created] = await db
               .insert(assetVulnerabilities)
               .values({
+                organizationId,
                 assetId: matched.asset.id,
                 cveId: cveRow.id,
                 firstSeen: finding.firstSeen,
@@ -1714,6 +1779,7 @@ export async function processScanImport(
             createdVulnerabilities += 1;
             newFindings += 1;
             await recordAssetVulnerabilityEvent({
+              organizationId,
               assetVulnerabilityId: created.id,
               eventType: "introduced",
               afterStatus: created.status,
@@ -1728,6 +1794,7 @@ export async function processScanImport(
               },
             });
             await createFindingAlerts({
+              organizationId,
               asset: matched.asset,
               cveId: cveRow.id,
               assetVulnerabilityId: created.id,
@@ -1739,11 +1806,16 @@ export async function processScanImport(
         }
       } catch (error) {
         Sentry.captureException(error);
-        errors.push(
-          error instanceof Error
-            ? error.message
-            : "A host entry could not be processed."
-        );
+        const normalizedError = normalizeImportError(error);
+
+        console.error("[scan-import] host processing failed", {
+          scanImportId,
+          code: normalizedError.code,
+          message: normalizedError.message,
+          errorName: normalizedError.name,
+          causeCode: normalizedError.causeCode,
+        });
+        errors.push(normalizedError.message);
       }
     }
 
@@ -1766,12 +1838,18 @@ export async function processScanImport(
           sourceScanImportId: scanImportId,
           updatedAt: new Date(),
         })
-        .where(eq(assetVulnerabilities.id, existing.id))
+        .where(
+          and(
+            eq(assetVulnerabilities.organizationId, organizationId),
+            eq(assetVulnerabilities.id, existing.id)
+          )
+        )
         .returning();
 
       avMap.set(key, closed);
       fixedFindings += 1;
       await recordAssetVulnerabilityEvent({
+        organizationId,
         assetVulnerabilityId: closed.id,
         eventType: "fixed",
         beforeStatus: existing.status,
@@ -1825,36 +1903,41 @@ export async function processScanImport(
       })
       .where(eq(scanImports.id, scanImportId));
 
-    await ensureDefaultReportDefinitions(scanImport.importedBy ?? null);
+    await ensureDefaultReportDefinitions(organizationId, scanImport.importedBy ?? null);
 
-    for (const cveId of enrichmentCveIds) {
-      try {
-        const queued = await queueCveEnrichment(cveId);
-        if (!queued.ok) {
-          warnings.push(`AI enrichment queue skipped for one CVE: ${queued.message}`);
+    if (aiEnabled) {
+      for (const cveId of enrichmentCveIds) {
+        try {
+          const queued = await queueCveEnrichment(cveId);
+          if (!queued.ok) {
+            warnings.push(`AI enrichment queue skipped for one CVE: ${queued.message}`);
+          }
+        } catch (error) {
+          Sentry.captureException(error);
+          warnings.push("AI enrichment queue skipped for one CVE.");
         }
-      } catch (error) {
-        Sentry.captureException(error);
-        warnings.push("AI enrichment queue skipped for one CVE.");
       }
-    }
 
-    for (const assetVulnerabilityId of enrichmentAssetVulnerabilityIds) {
-      try {
-        const queued = await queueAssetVulnerabilityEnrichment(
-          assetVulnerabilityId
-        );
-        if (!queued.ok) {
+      for (const assetVulnerabilityId of enrichmentAssetVulnerabilityIds) {
+        try {
+          const queued = await queueAssetVulnerabilityEnrichment(
+            assetVulnerabilityId,
+            { organizationId }
+          );
+          if (!queued.ok) {
+            warnings.push(
+              `AI playbook queue skipped for one asset vulnerability: ${queued.message}`
+            );
+          }
+        } catch (error) {
+          Sentry.captureException(error);
           warnings.push(
-            `AI playbook queue skipped for one asset vulnerability: ${queued.message}`
+            "AI playbook queue skipped for one asset vulnerability."
           );
         }
-      } catch (error) {
-        Sentry.captureException(error);
-        warnings.push(
-          "AI playbook queue skipped for one asset vulnerability."
-        );
       }
+    } else if (enrichmentCveIds.size || enrichmentAssetVulnerabilityIds.size) {
+      warnings.push("AI enrichment skipped because organization AI settings are disabled.");
     }
 
     if (warnings.length !== parsed.warnings.length) {
@@ -1921,6 +2004,7 @@ export async function processScanImport(
 
     try {
       await createImportFailureAlert({
+        organizationId,
         scanImportId,
         importedBy: scanImport.importedBy ?? null,
         message: normalizedError.message,
@@ -1943,6 +2027,7 @@ export async function processScanImport(
 export async function importAssetsFromCsv(params: {
   file: File;
   importedBy: string | null;
+  organizationId: string;
 }): Promise<CsvImportResult> {
   const db = getDb();
 
@@ -1974,7 +2059,7 @@ export async function importAssetsFromCsv(params: {
   }
 
   const [existingAssets, regionRows, ownerRows] = await Promise.all([
-    db.select().from(assets),
+    db.select().from(assets).where(eq(assets.organizationId, params.organizationId)),
     db.select().from(regions),
     db
       .select({
@@ -2097,6 +2182,7 @@ export async function importAssetsFromCsv(params: {
       };
 
       const matched = await upsertObservedAsset({
+        organizationId: params.organizationId,
         existingAssets,
         observedAsset,
         assetCodeGenerator,
@@ -2119,7 +2205,7 @@ export async function importAssetsFromCsv(params: {
   }
 
   if (createdAssets + updatedAssets > 0) {
-    await ensureDefaultReportDefinitions(params.importedBy);
+    await ensureDefaultReportDefinitions(params.organizationId, params.importedBy);
   }
 
   return {

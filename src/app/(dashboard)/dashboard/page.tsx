@@ -5,7 +5,7 @@ import { Filter, ShieldAlert, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { PageHeader } from "@/components/shared/page-header";
-import { requirePermission } from "@/lib/auth";
+import { requireActiveOrganization, requirePermission } from "@/lib/auth";
 import { startServerTiming } from "@/lib/observability/timing";
 import {
   getDashboardActivityData,
@@ -38,11 +38,11 @@ function DashboardSectionUnavailable({
   );
 }
 
-async function DashboardSummaryLoader() {
+async function DashboardSummaryLoader({ organizationId }: { organizationId: string }) {
   let data = null;
 
   try {
-    data = await getDashboardSummaryData();
+    data = await getDashboardSummaryData(organizationId);
   } catch {
     return <DashboardSectionUnavailable title="Dashboard summary unavailable" />;
   }
@@ -50,11 +50,11 @@ async function DashboardSummaryLoader() {
   return <DashboardSummarySection data={data} />;
 }
 
-async function DashboardRiskLoader() {
+async function DashboardRiskLoader({ organizationId }: { organizationId: string }) {
   let data = null;
 
   try {
-    data = await getDashboardRiskData();
+    data = await getDashboardRiskData(organizationId);
   } catch {
     return <DashboardSectionUnavailable title="Risk widgets unavailable" />;
   }
@@ -62,11 +62,11 @@ async function DashboardRiskLoader() {
   return <DashboardRiskSection data={data} />;
 }
 
-async function DashboardActivityLoader() {
+async function DashboardActivityLoader({ organizationId }: { organizationId: string }) {
   let data = null;
 
   try {
-    data = await getDashboardActivityData();
+    data = await getDashboardActivityData(organizationId);
   } catch {
     return <DashboardSectionUnavailable title="Activity widgets unavailable" />;
   }
@@ -78,6 +78,8 @@ export default async function DashboardPage() {
   noStore();
   const timing = startServerTiming("route.dashboard.page");
   await requirePermission("dashboard.view");
+  const activeOrganization = await requireActiveOrganization();
+  const organizationId = activeOrganization.organization.id;
   timing.end({ streamed: true });
 
   return (
@@ -113,13 +115,13 @@ export default async function DashboardPage() {
       />
 
       <Suspense fallback={<DashboardSummaryFallback />}>
-        <DashboardSummaryLoader />
+        <DashboardSummaryLoader organizationId={organizationId} />
       </Suspense>
       <Suspense fallback={<DashboardTwoCardFallback />}>
-        <DashboardRiskLoader />
+        <DashboardRiskLoader organizationId={organizationId} />
       </Suspense>
       <Suspense fallback={<DashboardTwoCardFallback />}>
-        <DashboardActivityLoader />
+        <DashboardActivityLoader organizationId={organizationId} />
       </Suspense>
 
       <div className="hidden items-center gap-2 rounded-xl border border-[#E9ECEF] bg-[#F8F9FA] px-3 py-2 text-[10px] font-medium uppercase tracking-[0.12em] text-[#6B7280] dark:border-[#27272a] dark:bg-[#141419] dark:text-[#94A3B8] xl:flex">

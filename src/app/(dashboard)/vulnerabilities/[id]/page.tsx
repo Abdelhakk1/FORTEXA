@@ -1,5 +1,5 @@
 import { notFound, redirect } from "next/navigation";
-import { requirePermission } from "@/lib/auth";
+import { requireActiveOrganization, requirePermission } from "@/lib/auth";
 import {
   getAssetVulnerabilityDetail,
   resolveAssetVulnerabilityIdFromRoute,
@@ -15,10 +15,12 @@ export default async function VulnerabilityDetailPage({
   params: Params;
 }) {
   const identity = await requirePermission("asset_vulnerabilities.read");
+  const activeOrganization = await requireActiveOrganization();
+  const organizationId = activeOrganization.organization.id;
   const { id } = await params;
 
   if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)) {
-    const data = await getAssetVulnerabilityDetail(id);
+    const data = await getAssetVulnerabilityDetail(organizationId, id);
 
     if (!data) {
       notFound();
@@ -40,6 +42,7 @@ export default async function VulnerabilityDetailPage({
   }
 
   const resolvedAssetVulnerabilityId = await resolveAssetVulnerabilityIdFromRoute(
+    organizationId,
     id
   );
 

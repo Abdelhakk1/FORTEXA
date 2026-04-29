@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { logAuditEvent } from "@/lib/audit";
-import { requirePermission } from "@/lib/auth";
+import { requireActiveOrganization, requirePermission } from "@/lib/auth";
 import { err, ok, toActionResult, type ActionResult } from "@/lib/errors";
 import { measureServerTiming } from "@/lib/observability/timing";
 import { createAsset, createAssetSchema } from "@/lib/services/assets";
@@ -19,10 +19,16 @@ export async function createAssetAction(
     async () => {
       try {
         const identity = await requirePermission("assets.write");
+        const activeOrganization = await requireActiveOrganization();
         const parsed = createAssetSchema.parse(input);
-        const row = await createAsset(parsed, identity.profile?.id ?? null);
+        const row = await createAsset(
+          parsed,
+          identity.profile?.id ?? null,
+          activeOrganization.organization.id
+        );
 
         await logAuditEvent({
+          organizationId: activeOrganization.organization.id,
           userId: identity.profile?.id ?? null,
           action: "asset.created",
           resourceType: "asset",
@@ -33,7 +39,10 @@ export async function createAssetAction(
           },
         });
 
-        await ensureDefaultReportDefinitions(identity.profile?.id ?? null);
+        await ensureDefaultReportDefinitions(
+          activeOrganization.organization.id,
+          identity.profile?.id ?? null
+        );
 
         revalidatePath("/assets");
         revalidatePath("/dashboard");
@@ -67,6 +76,7 @@ export async function importAssetsCsvAction(
     async () => {
       try {
         const identity = await requirePermission("assets.write");
+        const activeOrganization = await requireActiveOrganization();
         const file = formData.get("file");
 
         if (!(file instanceof File) || !file.size) {
@@ -84,9 +94,11 @@ export async function importAssetsCsvAction(
         const result = await importAssetsFromCsv({
           file,
           importedBy: identity.profile?.id ?? null,
+          organizationId: activeOrganization.organization.id,
         });
 
         await logAuditEvent({
+          organizationId: activeOrganization.organization.id,
           userId: identity.profile?.id ?? null,
           action: "asset.csv_imported",
           resourceType: "asset_import",

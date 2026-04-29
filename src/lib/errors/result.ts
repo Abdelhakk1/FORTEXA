@@ -1,3 +1,5 @@
+import { ZodError } from "zod";
+
 export type ResultCode =
   | "validation_error"
   | "unauthenticated"
@@ -50,6 +52,21 @@ export function err<T>(
 export function toActionResult<T>(error: unknown): ActionResult<T> {
   if (error instanceof AppError) {
     return err(error.code, error.message, error.fieldErrors);
+  }
+
+  if (error instanceof ZodError) {
+    const fieldErrors: FieldErrors = {};
+
+    for (const issue of error.issues) {
+      const key = issue.path.length > 0 ? String(issue.path[0]) : "form";
+      fieldErrors[key] = [...(fieldErrors[key] ?? []), issue.message];
+    }
+
+    return err(
+      "validation_error",
+      "Please fix the highlighted fields.",
+      fieldErrors
+    );
   }
 
   return err(

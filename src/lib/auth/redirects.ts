@@ -7,6 +7,8 @@ const SAFE_REDIRECT_PREFIXES = [
   "/scan-import",
   "/reports",
   "/settings",
+  "/onboarding",
+  "/invite",
 ] as const;
 
 function isSafePathname(pathname: string) {

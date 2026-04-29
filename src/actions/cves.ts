@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { logAuditEvent } from "@/lib/audit";
-import { requirePermission } from "@/lib/auth";
+import { requireActiveOrganization, requirePermission } from "@/lib/auth";
 import { ok, toActionResult, type ActionResult } from "@/lib/errors";
 import { runCveEnrichment } from "@/lib/services/cve-enrichment";
 
@@ -19,6 +19,7 @@ export async function retryCveEnrichmentAction(input: {
 > {
   try {
     const identity = await requirePermission("cves.enrich");
+    const active = await requireActiveOrganization();
 
     const inline = await runCveEnrichment(input.cveId, {
       force: input.force ?? true,
@@ -28,6 +29,7 @@ export async function retryCveEnrichmentAction(input: {
     revalidatePath(`/vulnerabilities/${input.cveCode}`);
 
     await logAuditEvent({
+      organizationId: active.organization.id,
       userId: identity.profile?.id ?? null,
       action: inline.ok ? "cve.ai_retry_completed" : "cve.ai_retry_failed",
       resourceType: "cve",

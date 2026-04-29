@@ -1,7 +1,7 @@
 import "server-only";
 
 import { z } from "zod";
-import { desc as drizzleDesc, eq } from "drizzle-orm";
+import { and, desc as drizzleDesc, eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import {
   alerts,
@@ -81,6 +81,7 @@ export const createScanImportRecordSchema = z.object({
   fileSize: z.number().int().nonnegative().optional(),
   storagePath: z.string().trim().min(1).max(1024).nullable().optional(),
   importedBy: z.string().uuid().nullable().optional(),
+  organizationId: z.string().uuid(),
 });
 
 function mapScanImportRow(row: {
@@ -148,7 +149,7 @@ function normalizeScanImportErrorDetails(
   };
 }
 
-export async function listScanImports(page = 1, pageSize = 10) {
+export async function listScanImports(organizationId: string, page = 1, pageSize = 10) {
   const db = getDb();
   const pagination = getPagination({ page, pageSize });
 
@@ -169,7 +170,10 @@ export async function listScanImports(page = 1, pageSize = 10) {
       "scanImports.list",
       async () => {
         const [totalRows, rows, summaryRows] = await Promise.all([
-          db.select({ total: count(scanImports.id) }).from(scanImports),
+          db
+            .select({ total: count(scanImports.id) })
+            .from(scanImports)
+            .where(eq(scanImports.organizationId, organizationId)),
           db
             .select({
               scanImport: scanImports,
@@ -177,6 +181,7 @@ export async function listScanImports(page = 1, pageSize = 10) {
             })
             .from(scanImports)
             .leftJoin(profiles, eq(scanImports.importedBy, profiles.id))
+            .where(eq(scanImports.organizationId, organizationId))
             .orderBy(desc(scanImports.importDate))
             .limit(pagination.pageSize)
             .offset(pagination.offset),
@@ -188,7 +193,8 @@ export async function listScanImports(page = 1, pageSize = 10) {
               averageProcessingTimeMs:
                 sql<number>`coalesce(avg(${scanImports.processingTimeMs}), 0)::int`,
             })
-            .from(scanImports),
+            .from(scanImports)
+            .where(eq(scanImports.organizationId, organizationId)),
         ]);
 
         const summary = summaryRows[0];
@@ -267,6 +273,7 @@ export async function createScanImportRecord(
 }
 
 export async function getScanImportDetail(
+  organizationId: string,
   importId: string
 ): Promise<ScanImportDetailData | null> {
   const db = getDb();
@@ -282,7 +289,9 @@ export async function getScanImportDetail(
     })
     .from(scanImports)
     .leftJoin(profiles, eq(scanImports.importedBy, profiles.id))
-    .where(eq(scanImports.id, importId))
+    .where(
+      and(eq(scanImports.organizationId, organizationId), eq(scanImports.id, importId))
+    )
     .limit(1);
 
   if (!scanImportRow) {
@@ -300,7 +309,12 @@ export async function getScanImportDetail(
     .from(scanFindings)
     .leftJoin(assets, eq(scanFindings.matchedAssetId, assets.id))
     .leftJoin(cves, eq(scanFindings.matchedCveId, cves.id))
-    .where(eq(scanFindings.scanImportId, importId))
+    .where(
+      and(
+        eq(scanFindings.organizationId, organizationId),
+        eq(scanFindings.scanImportId, importId)
+      )
+    )
     .orderBy(drizzleDesc(scanFindings.severity), drizzleDesc(scanFindings.lastSeen))
     .limit(100);
 
@@ -330,7 +344,12 @@ export async function getScanImportDetail(
       alert: alerts,
     })
     .from(alerts)
-    .where(eq(alerts.relatedScanImportId, importId))
+    .where(
+      and(
+        eq(alerts.organizationId, organizationId),
+        eq(alerts.relatedScanImportId, importId)
+      )
+    )
     .orderBy(desc(alerts.createdAt))
     .limit(10);
 

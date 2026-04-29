@@ -133,8 +133,8 @@ export const createAssetSchema = z.object({
   ownerId: z.string().uuid().nullable().optional(),
 });
 
-function buildAssetWhere(filters: AssetListFilters) {
-  const clauses: SQL[] = [];
+function buildAssetWhere(organizationId: string, filters: AssetListFilters) {
+  const clauses: SQL[] = [eq(assets.organizationId, organizationId)];
   const search = searchTerm(filters.search);
 
   if (search) {
@@ -268,7 +268,10 @@ function mapAssets(
   });
 }
 
-export async function listAssets(filters: AssetListFilters = {}): Promise<AssetsPageData> {
+export async function listAssets(
+  organizationId: string,
+  filters: AssetListFilters = {}
+): Promise<AssetsPageData> {
   const db = getDb();
   const pagination = getPagination(filters);
 
@@ -289,7 +292,7 @@ export async function listAssets(filters: AssetListFilters = {}): Promise<Assets
     return await measureServerTiming(
       "assets.list",
       async () => {
-        const where = buildAssetWhere(filters);
+        const where = buildAssetWhere(organizationId, filters);
 
         const [regionRows, summaryRows, totalRows, assetRows] = await Promise.all([
           db.select().from(regions).orderBy(regions.name),
@@ -303,7 +306,8 @@ export async function listAssets(filters: AssetListFilters = {}): Promise<Assets
               internetFacing:
                 sql<number>`count(*) filter (where ${assets.exposureLevel} = 'internet_facing')::int`,
             })
-            .from(assets),
+            .from(assets)
+            .where(eq(assets.organizationId, organizationId)),
           db.select({ total: count(assets.id) }).from(assets).where(where),
           db
             .select({
@@ -334,6 +338,7 @@ export async function listAssets(filters: AssetListFilters = {}): Promise<Assets
                 .leftJoin(cves, eq(assetVulnerabilities.cveId, cves.id))
                 .where(
                   and(
+                    eq(assetVulnerabilities.organizationId, organizationId),
                     inArray(assetVulnerabilities.assetId, assetIds),
                     ne(assetVulnerabilities.status, "closed")
                   )
@@ -386,7 +391,8 @@ export async function listAssets(filters: AssetListFilters = {}): Promise<Assets
 
 export async function createAsset(
   input: z.input<typeof createAssetSchema>,
-  createdByUserId?: string | null
+  createdByUserId: string | null,
+  organizationId: string
 ) {
   const db = getDb();
 
@@ -411,6 +417,7 @@ export async function createAsset(
     .insert(assets)
     .values({
       ...parsed.data,
+      organizationId,
       model: parsed.data.model || null,
       manufacturer: parsed.data.manufacturer || null,
       branch: parsed.data.branch || null,
@@ -436,6 +443,7 @@ export async function createAsset(
 }
 
 export async function getAssetDetail(
+  organizationId: string,
   assetCode: string
 ): Promise<AssetDetailData | null> {
   const db = getDb();
@@ -453,7 +461,7 @@ export async function getAssetDetail(
     .from(assets)
     .leftJoin(regions, eq(assets.regionId, regions.id))
     .leftJoin(profiles, eq(assets.ownerId, profiles.id))
-    .where(eq(assets.assetCode, assetCode))
+    .where(and(eq(assets.organizationId, organizationId), eq(assets.assetCode, assetCode)))
     .limit(1);
 
   if (!assetRow) {
@@ -467,7 +475,12 @@ export async function getAssetDetail(
     })
     .from(assetVulnerabilities)
     .leftJoin(cves, eq(assetVulnerabilities.cveId, cves.id))
-    .where(eq(assetVulnerabilities.assetId, assetRow.asset.id))
+    .where(
+      and(
+        eq(assetVulnerabilities.organizationId, organizationId),
+        eq(assetVulnerabilities.assetId, assetRow.asset.id)
+      )
+    )
     .orderBy(desc(assetVulnerabilities.riskScore), desc(assetVulnerabilities.lastSeen));
 
   const statsRows = vulnerabilityRows.map((row) => ({
@@ -530,15 +543,18 @@ export async function getAssetDetail(
           .leftJoin(profiles, eq(remediationTasks.assignedTo, profiles.id))
           .leftJoin(cves, eq(remediationTasks.cveId, cves.id))
           .where(
-            or(
-              inArray(
-                remediationTasks.assetVulnerabilityId,
-                vulnerabilityRows.map((row) => row.av.id)
-              ),
-              inArray(
-                remediationTasks.cveId,
-                vulnerabilityRows.map((row) => row.av.cveId)
-              )
+            and(
+              eq(remediationTasks.organizationId, organizationId),
+              or(
+                inArray(
+                  remediationTasks.assetVulnerabilityId,
+                  vulnerabilityRows.map((row) => row.av.id)
+                ),
+                inArray(
+                  remediationTasks.cveId,
+                  vulnerabilityRows.map((row) => row.av.cveId)
+                )
+              )!
             )!
           )
           .orderBy(desc(remediationTasks.updatedAt))
@@ -572,7 +588,12 @@ export async function getAssetDetail(
     })
     .from(scanFindings)
     .innerJoin(scanImports, eq(scanFindings.scanImportId, scanImports.id))
-    .where(eq(scanFindings.matchedAssetId, assetRow.asset.id))
+    .where(
+      and(
+        eq(scanFindings.organizationId, organizationId),
+        eq(scanFindings.matchedAssetId, assetRow.asset.id)
+      )
+    )
     .orderBy(desc(scanImports.importDate))
     .limit(5);
 
@@ -598,14 +619,20 @@ export async function getAssetDetail(
     .leftJoin(cves, eq(alerts.relatedCveId, cves.id))
     .where(
       vulnerabilityRows.length > 0
-        ? or(
-            eq(alerts.relatedAssetId, assetRow.asset.id),
-            inArray(
-              alerts.relatedAssetVulnerabilityId,
-              vulnerabilityRows.map((row) => row.av.id)
-            )
+        ? and(
+            eq(alerts.organizationId, organizationId),
+            or(
+              eq(alerts.relatedAssetId, assetRow.asset.id),
+              inArray(
+                alerts.relatedAssetVulnerabilityId,
+                vulnerabilityRows.map((row) => row.av.id)
+              )
+            )!
           )!
-        : eq(alerts.relatedAssetId, assetRow.asset.id)
+        : and(
+            eq(alerts.organizationId, organizationId),
+            eq(alerts.relatedAssetId, assetRow.asset.id)
+          )
     )
     .orderBy(desc(alerts.createdAt))
     .limit(5);

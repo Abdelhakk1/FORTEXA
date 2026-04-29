@@ -32,7 +32,24 @@ function readPositiveIntEnv(value: string | undefined) {
   return parsed;
 }
 
+function readUrlEnv(value: string | undefined) {
+  const trimmed = readEnv(value);
+
+  if (!trimmed) {
+    return undefined;
+  }
+
+  try {
+    return new URL(trimmed).origin;
+  } catch {
+    return undefined;
+  }
+}
+
+export const defaultResendFromEmail = "Fortexa <onboarding@resend.dev>";
+
 export const serverEnv = {
+  nextPublicAppUrl: readUrlEnv(process.env.NEXT_PUBLIC_APP_URL),
   nextPublicSupabaseUrl: readEnv(process.env.NEXT_PUBLIC_SUPABASE_URL),
   nextPublicSupabaseAnonKey: readEnv(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY),
   nextPublicSentryDsn: readEnv(process.env.NEXT_PUBLIC_SENTRY_DSN),
@@ -61,7 +78,10 @@ export const serverEnv = {
   fortexaScanImportsBucket:
     readEnv(process.env.FORTEXA_SCAN_IMPORTS_BUCKET) ??
     "fortexa-scan-imports",
-  fortexaMailFrom: readEnv(process.env.FORTEXA_MAIL_FROM),
+  resendFromEmail:
+    readEnv(process.env.RESEND_FROM_EMAIL) ??
+    readEnv(process.env.FORTEXA_MAIL_FROM) ??
+    defaultResendFromEmail,
 } as const;
 
 export function getMissingEnvVars() {

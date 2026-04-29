@@ -10,6 +10,7 @@ import {
 } from "drizzle-orm/pg-core";
 import { importStatusEnum, scannerSourceEnum } from "./enums";
 import { profiles } from "./profiles";
+import { organizations } from "./organizations";
 
 /**
  * Scan Imports
@@ -29,6 +30,9 @@ export const scanImports = pgTable(
   "scan_imports",
   {
     id: uuid("id").primaryKey().defaultRandom(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
 
     name: text("name").notNull(),
     scannerSource: scannerSourceEnum("scanner_source").notNull(),
@@ -95,6 +99,8 @@ export const scanImports = pgTable(
   },
   (table) => [
     // ─── Operational indexes (imports history list page) ───────────────
+    index("idx_imports_org").on(table.organizationId),
+    index("idx_imports_org_date").on(table.organizationId, table.importDate),
     index("idx_imports_status").on(table.status),
     index("idx_imports_date").on(table.importDate),
     index("idx_imports_user").on(table.importedBy),

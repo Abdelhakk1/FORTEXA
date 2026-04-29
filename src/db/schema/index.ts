@@ -19,6 +19,11 @@ export * from "./enums";
 // ─── Tier 1 — MVP Core ─────────────────────────────────────────────
 export { roles } from "./roles";
 export { profiles } from "./profiles";
+export { organizations } from "./organizations";
+export { organizationMembers } from "./organization-members";
+export { organizationInvites } from "./organization-invites";
+export { organizationSettings } from "./organization-settings";
+export { sites } from "./sites";
 export { regions } from "./regions";
 export { assets } from "./assets";
 export { cves } from "./cves";

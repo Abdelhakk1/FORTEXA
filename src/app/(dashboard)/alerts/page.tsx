@@ -1,4 +1,4 @@
-import { requirePermission } from "@/lib/auth";
+import { requireActiveOrganization, requirePermission } from "@/lib/auth";
 import { listAlerts } from "@/lib/services/alerts";
 import { startServerTiming } from "@/lib/observability/timing";
 import { AlertsPageClient } from "./alerts-page-client";
@@ -16,6 +16,7 @@ export default async function AlertsPage({
 }) {
   const timing = startServerTiming("route.alerts.page");
   await requirePermission("alerts.read");
+  const activeOrganization = await requireActiveOrganization();
   const params = await searchParams;
   const filters = {
     search: getValue(params.search) ?? "",
@@ -25,7 +26,7 @@ export default async function AlertsPage({
     ownerId: getValue(params.ownerId) ?? "all",
   };
 
-  const data = await listAlerts({
+  const data = await listAlerts(activeOrganization.organization.id, {
     search: filters.search,
     severity: filters.severity,
     type: filters.type,

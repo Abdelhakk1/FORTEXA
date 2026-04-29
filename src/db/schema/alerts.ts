@@ -14,6 +14,7 @@ import { assetVulnerabilities } from "./asset-vulnerabilities";
 import { scanImports } from "./scan-imports";
 import { remediationTasks } from "./remediation-tasks";
 import { profiles } from "./profiles";
+import { organizations } from "./organizations";
 
 /**
  * Alerts
@@ -36,6 +37,9 @@ export const alerts = pgTable(
   "alerts",
   {
     id: uuid("id").primaryKey().defaultRandom(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
 
     title: text("title").notNull(),
     description: text("description"),
@@ -107,6 +111,7 @@ export const alerts = pgTable(
     ),
 
     // ─── Operational indexes ──────────────────────────────────────────
+    index("idx_alerts_org").on(table.organizationId),
     index("idx_alerts_status").on(table.status),
     index("idx_alerts_severity").on(table.severity),
     index("idx_alerts_created").on(table.createdAt),

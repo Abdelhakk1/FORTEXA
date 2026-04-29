@@ -7,6 +7,7 @@ import {
 } from "drizzle-orm/pg-core";
 import { reportTypeEnum, reportStatusEnum } from "./enums";
 import { profiles } from "./profiles";
+import { organizations } from "./organizations";
 
 /**
  * Report Definitions
@@ -24,6 +25,9 @@ import { profiles } from "./profiles";
  */
 export const reportDefinitions = pgTable("report_definitions", {
   id: uuid("id").primaryKey().defaultRandom(),
+  organizationId: uuid("organization_id")
+    .notNull()
+    .references(() => organizations.id, { onDelete: "cascade" }),
 
   name: text("name").notNull(),
   description: text("description"),

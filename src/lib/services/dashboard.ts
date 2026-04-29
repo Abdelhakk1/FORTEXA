@@ -28,6 +28,7 @@ export interface DashboardSummaryData {
     openAlerts: number;
     overdueTasks: number;
   };
+  hasOperationalData: boolean;
   severityDistribution: Array<{ name: string; value: number; color: string }>;
   exposureTrend: Array<{ month: string; critical: number; high: number; medium: number; low: number }>;
   remediationTrend: Array<{ month: string; opened: number; closed: number; overdue: number }>;
@@ -154,6 +155,7 @@ function emptySummaryData(): DashboardSummaryData {
       openAlerts: 0,
       overdueTasks: 0,
     },
+    hasOperationalData: false,
     severityDistribution: [
       { name: "Critical", value: 0, color: "#EF4444" },
       { name: "High", value: 0, color: "#F59E0B" },
@@ -179,7 +181,9 @@ function emptyActivityData(): DashboardActivityData {
   };
 }
 
-export async function getDashboardSummaryData(): Promise<DashboardSummaryData> {
+export async function getDashboardSummaryData(
+  organizationId: string
+): Promise<DashboardSummaryData> {
   const db = getDb();
 
   if (!db) {
@@ -194,17 +198,17 @@ export async function getDashboardSummaryData(): Promise<DashboardSummaryData> {
       const totalsRows = asRows<DashboardTotalsRow>(
         await db.execute(sql`
           select
-            (select count(*)::int from assets) as "totalAssets",
-            (select count(*)::int from assets where type in ('atm', 'gab')) as "atmGabCount",
-            (select count(*)::int from asset_vulnerabilities where status <> 'closed') as "totalVulnerabilities",
+            (select count(*)::int from assets where organization_id = ${organizationId}) as "totalAssets",
+            (select count(*)::int from assets where organization_id = ${organizationId} and type in ('atm', 'gab')) as "atmGabCount",
+            (select count(*)::int from asset_vulnerabilities where organization_id = ${organizationId} and status <> 'closed') as "totalVulnerabilities",
             (
               select count(*)::int
               from asset_vulnerabilities av
               inner join cves c on c.id = av.cve_id
-              where av.status <> 'closed' and c.severity = 'critical'
+              where av.organization_id = ${organizationId} and av.status <> 'closed' and c.severity = 'critical'
             ) as "criticalVulnerabilities",
-            (select count(*)::int from alerts where status in ('new', 'acknowledged')) as "openAlerts",
-            (select count(*)::int from remediation_tasks where sla_status = 'overdue') as "overdueTasks"
+            (select count(*)::int from alerts where organization_id = ${organizationId} and status in ('new', 'acknowledged')) as "openAlerts",
+            (select count(*)::int from remediation_tasks where organization_id = ${organizationId} and sla_status = 'overdue') as "overdueTasks"
         `)
       );
       const severityRows = asRows<SeverityRow>(
@@ -212,7 +216,7 @@ export async function getDashboardSummaryData(): Promise<DashboardSummaryData> {
           select c.severity as severity, count(*)::int as total
           from asset_vulnerabilities av
           inner join cves c on c.id = av.cve_id
-          where av.status <> 'closed'
+          where av.organization_id = ${organizationId} and av.status <> 'closed'
           group by c.severity
         `)
       );
@@ -224,6 +228,10 @@ export async function getDashboardSummaryData(): Promise<DashboardSummaryData> {
 
       return {
         totals,
+        hasOperationalData:
+          totals.totalAssets > 0 ||
+          totals.totalVulnerabilities > 0 ||
+          totals.openAlerts > 0,
         severityDistribution: [
           {
             name: "Critical",
@@ -258,7 +266,9 @@ export async function getDashboardSummaryData(): Promise<DashboardSummaryData> {
   );
 }
 
-export async function getDashboardRiskData(): Promise<DashboardRiskData> {
+export async function getDashboardRiskData(
+  organizationId: string
+): Promise<DashboardRiskData> {
   const db = getDb();
 
   if (!db) {
@@ -300,7 +310,7 @@ export async function getDashboardRiskData(): Promise<DashboardRiskData> {
             from asset_vulnerabilities av
             inner join assets a on a.id = av.asset_id
             left join cves c on c.id = av.cve_id
-            where av.status <> 'closed'
+            where av.organization_id = ${organizationId} and av.status <> 'closed'
             group by a.id
             order by max(av.risk_score) desc, a.asset_code asc
             limit 5
@@ -337,7 +347,7 @@ export async function getDashboardRiskData(): Promise<DashboardRiskData> {
               coalesce(max(av.risk_score), 0)::int as "riskScore"
             from asset_vulnerabilities av
             inner join cves c on c.id = av.cve_id
-            where av.status <> 'closed'
+            where av.organization_id = ${organizationId} and av.status <> 'closed'
             group by c.id
             order by max(av.risk_score) desc, c.cvss_score desc nulls last, c.cve_id asc
             limit 5
@@ -410,7 +420,9 @@ export async function getDashboardRiskData(): Promise<DashboardRiskData> {
   );
 }
 
-export async function getDashboardActivityData(): Promise<DashboardActivityData> {
+export async function getDashboardActivityData(
+  organizationId: string
+): Promise<DashboardActivityData> {
   const db = getDb();
 
   if (!db) {
@@ -434,6 +446,7 @@ export async function getDashboardActivityData(): Promise<DashboardActivityData>
               a.status as status
             from alerts a
             left join assets asset on asset.id = a.related_asset_id
+            where a.organization_id = ${organizationId}
             order by a.created_at desc
             limit 5
           `)
@@ -448,6 +461,7 @@ export async function getDashboardActivityData(): Promise<DashboardActivityData>
               findings_found as "findingsFound",
               status as status
             from scan_imports
+            where organization_id = ${organizationId}
             order by import_date desc
             limit 5
           `)

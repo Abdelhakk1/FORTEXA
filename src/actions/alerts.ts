@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { logAuditEvent } from "@/lib/audit";
-import { requirePermission } from "@/lib/auth";
+import { requireActiveOrganization, requirePermission } from "@/lib/auth";
 import { err, ok, toActionResult, type ActionResult } from "@/lib/errors";
 import { measureServerTiming } from "@/lib/observability/timing";
 import {
@@ -23,9 +23,15 @@ export async function acknowledgeAlertAction(
     async () => {
       try {
         const identity = await requirePermission("alerts.acknowledge");
-        const row = await updateAlertStatus(alertId, "acknowledged");
+        const activeOrganization = await requireActiveOrganization();
+        const row = await updateAlertStatus(
+          activeOrganization.organization.id,
+          alertId,
+          "acknowledged"
+        );
 
         await logAuditEvent({
+          organizationId: activeOrganization.organization.id,
           userId: identity.profile?.id ?? null,
           action: "alert.acknowledged",
           resourceType: "alert",
@@ -54,13 +60,16 @@ export async function resolveAlertAction(
     async () => {
       try {
         const identity = await requirePermission("alerts.resolve");
+        const activeOrganization = await requireActiveOrganization();
         const row = await updateAlertStatus(
+          activeOrganization.organization.id,
           alertId,
           "resolved",
           identity.profile?.id ?? null
         );
 
         await logAuditEvent({
+          organizationId: activeOrganization.organization.id,
           userId: identity.profile?.id ?? null,
           action: "alert.resolved",
           resourceType: "alert",
@@ -90,9 +99,15 @@ export async function dismissAlertAction(
     async () => {
       try {
         const identity = await requirePermission("alerts.resolve");
-        const row = await updateAlertStatus(alertId, "dismissed");
+        const activeOrganization = await requireActiveOrganization();
+        const row = await updateAlertStatus(
+          activeOrganization.organization.id,
+          alertId,
+          "dismissed"
+        );
 
         await logAuditEvent({
+          organizationId: activeOrganization.organization.id,
           userId: identity.profile?.id ?? null,
           action: "alert.dismissed",
           resourceType: "alert",
@@ -121,13 +136,15 @@ export async function acknowledgeAllAlertsAction(): Promise<
     async () => {
       try {
         const identity = await requirePermission("alerts.acknowledge");
-        const rows = await acknowledgeAllNewAlerts();
+        const activeOrganization = await requireActiveOrganization();
+        const rows = await acknowledgeAllNewAlerts(activeOrganization.organization.id);
 
         if (!rows.length) {
           return err("not_found", "There are no new alerts to acknowledge.");
         }
 
         await logAuditEvent({
+          organizationId: activeOrganization.organization.id,
           userId: identity.profile?.id ?? null,
           action: "alert.bulk_acknowledged",
           resourceType: "alert",

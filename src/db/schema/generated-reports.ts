@@ -8,6 +8,7 @@ import {
 import { reportFormatEnum } from "./enums";
 import { reportDefinitions } from "./report-definitions";
 import { profiles } from "./profiles";
+import { organizations } from "./organizations";
 
 /**
  * Generated Reports (Late Tier 2 — defined early, implemented in Phase 6)
@@ -26,6 +27,9 @@ import { profiles } from "./profiles";
  */
 export const generatedReports = pgTable("generated_reports", {
   id: uuid("id").primaryKey().defaultRandom(),
+  organizationId: uuid("organization_id")
+    .notNull()
+    .references(() => organizations.id, { onDelete: "cascade" }),
 
   /**
    * FK → report_definitions.id — which template produced this report.

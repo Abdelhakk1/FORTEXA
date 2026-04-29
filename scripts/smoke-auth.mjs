@@ -79,7 +79,8 @@ async function findAuthUserByEmail(supabase, email) {
 export async function ensureSmokeUser() {
   const supabase = createSupabaseAdminClient();
   const email =
-    process.env.FORTEXA_SMOKE_EMAIL?.trim() || "fortexa.smoke@fortexa.local";
+    process.env.FORTEXA_SMOKE_EMAIL?.trim() ||
+    `fortexa.smoke.${Date.now()}.${randomBytes(4).toString("hex")}@fortexa.local`;
   const password = `Fortexa!${randomBytes(12).toString("hex")}A1`;
   const existingUser = await findAuthUserByEmail(supabase, email);
   const userResult = await withRetry("prepare smoke user", () =>
@@ -119,6 +120,94 @@ export async function ensureSmokeUser() {
 
   if (profileError) {
     throw profileError;
+  }
+
+  const { data: organization, error: organizationError } = await withRetry(
+    "load smoke organization",
+    () =>
+      supabase
+        .from("organizations")
+        .select("id")
+        .order("created_at", { ascending: true })
+        .limit(1)
+        .maybeSingle()
+  );
+
+  if (organizationError) {
+    throw organizationError;
+  }
+
+  const activeOrganization =
+    organization ??
+    (
+      await withRetry("create smoke organization", () =>
+        supabase
+          .from("organizations")
+          .insert({
+            name: "Fortexa Smoke Workspace",
+            slug: "fortexa-smoke-workspace",
+            company_type: "bank",
+            default_region: "Smoke Region",
+            default_country: "Test",
+            timezone: "UTC",
+            onboarding_completed: true,
+            onboarding_step: "complete",
+            completed_at: new Date().toISOString(),
+          })
+          .select("id")
+          .single()
+      )
+    ).data;
+
+  if (!activeOrganization?.id) {
+    throw new Error("Smoke organization could not be prepared.");
+  }
+
+  const { error: membershipError } = await withRetry("upsert smoke membership", () =>
+    supabase.from("organization_members").upsert(
+      {
+        organization_id: activeOrganization.id,
+        profile_id: userResult.data.user.id,
+        role: "owner",
+        status: "active",
+      },
+      { onConflict: "organization_id,profile_id" }
+    )
+  );
+
+  if (membershipError) {
+    throw membershipError;
+  }
+
+  const { error: settingsError } = await withRetry("upsert smoke settings", () =>
+    supabase.from("organization_settings").upsert(
+      {
+        organization_id: activeOrganization.id,
+        operating_context: {
+          atmGabFleet: true,
+          vendorManagedSystems: false,
+        },
+        notifications: {
+          emailEnabled: false,
+          importFailures: true,
+          taskAssignments: true,
+          slaBreaches: true,
+          aiFailures: true,
+          dailyDigest: false,
+        },
+        scanner_settings: {
+          nessus: true,
+          openvas: false,
+          nmap: false,
+          qualys: false,
+        },
+      },
+      { onConflict: "organization_id" }
+    )
+  );
+
+  if (settingsError) {
+    throw settingsError;
   }
 
   const browserSupabase = createClient(

@@ -40,6 +40,23 @@ try {
       migration: `src/db/migrations/${relativePath}`,
     })
   );
+} catch (error) {
+  console.error(
+    JSON.stringify(
+      {
+        result: "failed",
+        migration: `src/db/migrations/${relativePath}`,
+        code:
+          error && typeof error === "object" && "code" in error
+            ? error.code
+            : "unknown",
+        message: error instanceof Error ? error.message : "Unknown migration error.",
+      },
+      null,
+      2
+    )
+  );
+  process.exitCode = 1;
 } finally {
   await sql.end();
 }

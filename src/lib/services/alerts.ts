@@ -34,8 +34,8 @@ export const updateAlertStatusSchema = z.object({
   id: z.string().uuid(),
 });
 
-function buildAlertWhere(filters: AlertListFilters) {
-  const clauses: SQL[] = [];
+function buildAlertWhere(organizationId: string, filters: AlertListFilters) {
+  const clauses: SQL[] = [eq(alerts.organizationId, organizationId)];
   const search = searchTerm(filters.search);
 
   if (search) {
@@ -91,7 +91,10 @@ function mapAlertRow(row: {
   } satisfies AlertListItem;
 }
 
-export async function listAlerts(filters: AlertListFilters = {}) {
+export async function listAlerts(
+  organizationId: string,
+  filters: AlertListFilters = {}
+) {
   const db = getDb();
   const pagination = getPagination({
     page: filters.page,
@@ -115,7 +118,7 @@ export async function listAlerts(filters: AlertListFilters = {}) {
   return measureServerTiming(
     "alerts.list",
     async () => {
-      const where = buildAlertWhere(filters);
+      const where = buildAlertWhere(organizationId, filters);
 
       const [ownerRows, totalRows, alertRows, summaryRows] = await Promise.all([
         db
@@ -158,7 +161,8 @@ export async function listAlerts(filters: AlertListFilters = {}) {
             resolvedCount:
               sql<number>`count(*) filter (where ${alerts.status} = 'resolved')::int`,
           })
-          .from(alerts),
+          .from(alerts)
+          .where(eq(alerts.organizationId, organizationId)),
       ]);
 
       const mapped = alertRows.map(mapAlertRow);
@@ -191,7 +195,7 @@ export async function listAlerts(filters: AlertListFilters = {}) {
   );
 }
 
-export async function listRecentAlertActivity(limit = 3) {
+export async function listRecentAlertActivity(organizationId: string, limit = 3) {
   const db = getDb();
 
   if (!db) {
@@ -218,6 +222,7 @@ export async function listRecentAlertActivity(limit = 3) {
             .leftJoin(assets, eq(alerts.relatedAssetId, assets.id))
             .leftJoin(cves, eq(alerts.relatedCveId, cves.id))
             .leftJoin(profiles, eq(alerts.ownerId, profiles.id))
+            .where(eq(alerts.organizationId, organizationId))
             .orderBy(desc(alerts.createdAt))
             .limit(limit),
           db
@@ -225,7 +230,8 @@ export async function listRecentAlertActivity(limit = 3) {
               unreadCount:
                 sql<number>`count(*) filter (where ${alerts.status} = 'new')::int`,
             })
-            .from(alerts),
+            .from(alerts)
+            .where(eq(alerts.organizationId, organizationId)),
         ]);
 
         return {
@@ -248,6 +254,7 @@ export async function listRecentAlertActivity(limit = 3) {
 }
 
 export async function updateAlertStatus(
+  organizationId: string,
   alertId: string,
   status: "acknowledged" | "resolved" | "dismissed",
   resolvedBy?: string | null
@@ -270,7 +277,7 @@ export async function updateAlertStatus(
       resolvedAt: status === "resolved" ? now : undefined,
       resolvedBy: status === "resolved" ? resolvedBy ?? null : undefined,
     })
-    .where(eq(alerts.id, alertId))
+    .where(and(eq(alerts.organizationId, organizationId), eq(alerts.id, alertId)))
     .returning();
 
   if (!row) {
@@ -280,7 +287,7 @@ export async function updateAlertStatus(
   return row;
 }
 
-export async function acknowledgeAllNewAlerts() {
+export async function acknowledgeAllNewAlerts(organizationId: string) {
   const db = getDb();
 
   if (!db) {
@@ -296,6 +303,6 @@ export async function acknowledgeAllNewAlerts() {
       status: "acknowledged",
       acknowledgedAt: new Date(),
     })
-    .where(eq(alerts.status, "new"))
+    .where(and(eq(alerts.organizationId, organizationId), eq(alerts.status, "new")))
     .returning();
 }

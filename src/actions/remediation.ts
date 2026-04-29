@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { logAuditEvent } from "@/lib/audit";
-import { requireAuth, requirePermission } from "@/lib/auth";
+import { requireActiveOrganization, requireAuth, requirePermission } from "@/lib/auth";
 import { AppError } from "@/lib/errors";
 import { ok, toActionResult, type ActionResult } from "@/lib/errors";
 import { measureServerTiming } from "@/lib/observability/timing";
@@ -23,10 +23,16 @@ export async function createRemediationTaskAction(
     async () => {
       try {
         const identity = await requirePermission("remediation.write");
+        const activeOrganization = await requireActiveOrganization();
         const parsed = createRemediationTaskSchema.parse(input);
-        const row = await createRemediationTask(parsed, identity.profile!.id);
+        const row = await createRemediationTask(
+          parsed,
+          identity.profile!.id,
+          activeOrganization.organization.id
+        );
 
         await logAuditEvent({
+          organizationId: activeOrganization.organization.id,
           userId: identity.profile?.id ?? null,
           action: "remediation_task.created",
           resourceType: "remediation_task",
@@ -52,14 +58,15 @@ export async function createRemediationTaskAction(
 
 export async function updateRemediationStatusAction(
   taskId: string,
-  status: Parameters<typeof updateRemediationStatus>[1]
+  status: Parameters<typeof updateRemediationStatus>[2]
 ): Promise<ActionResult<{ id: string }>> {
   return measureServerTiming(
     "action.remediation.updateStatus",
     async () => {
       try {
         const identity = await requireAuth();
-        const current = await getRemediationTask(taskId);
+        const activeOrganization = await requireActiveOrganization();
+        const current = await getRemediationTask(activeOrganization.organization.id, taskId);
         const canWrite = identity.permissions.includes("remediation.write");
         const canUpdateOwnStatus =
           identity.permissions.includes("remediation.update_status") &&
@@ -72,9 +79,14 @@ export async function updateRemediationStatusAction(
           );
         }
 
-        const row = await updateRemediationStatus(taskId, status);
+        const row = await updateRemediationStatus(
+          activeOrganization.organization.id,
+          taskId,
+          status
+        );
 
         await logAuditEvent({
+          organizationId: activeOrganization.organization.id,
           userId: identity.profile?.id ?? null,
           action: "remediation_task.status_updated",
           resourceType: "remediation_task",
@@ -98,14 +110,18 @@ export async function updateRemediationStatusAction(
 }
 
 export async function updateRemediationTaskAction(
-  input: Parameters<typeof updateRemediationTask>[0]
+  input: Parameters<typeof updateRemediationTask>[1]
 ): Promise<ActionResult<{ id: string }>> {
   return measureServerTiming(
     "action.remediation.updateTask",
     async () => {
       try {
         const identity = await requireAuth();
-        const current = await getRemediationTask(input.id);
+        const activeOrganization = await requireActiveOrganization();
+        const current = await getRemediationTask(
+          activeOrganization.organization.id,
+          input.id
+        );
         const canWrite = identity.permissions.includes("remediation.write");
         const canUpdateStatus = identity.permissions.includes(
           "remediation.update_status"
@@ -135,9 +151,13 @@ export async function updateRemediationTaskAction(
         }
 
         const parsed = updateRemediationTaskSchema.parse(input);
-        const row = await updateRemediationTask(parsed);
+        const row = await updateRemediationTask(
+          activeOrganization.organization.id,
+          parsed
+        );
 
         await logAuditEvent({
+          organizationId: activeOrganization.organization.id,
           userId: identity.profile?.id ?? null,
           action: "remediation_task.updated",
           resourceType: "remediation_task",

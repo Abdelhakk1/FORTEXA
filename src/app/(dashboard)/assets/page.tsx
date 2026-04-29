@@ -1,4 +1,4 @@
-import { requirePermission } from "@/lib/auth";
+import { requireActiveOrganization, requirePermission } from "@/lib/auth";
 import { listAssets } from "@/lib/services/assets";
 import { startServerTiming } from "@/lib/observability/timing";
 import { AssetsPageClient } from "./assets-page-client";
@@ -16,6 +16,7 @@ export default async function AssetsPage({
 }) {
   const timing = startServerTiming("route.assets.page");
   await requirePermission("assets.read");
+  const activeOrganization = await requireActiveOrganization();
   const params = await searchParams;
   const filters = {
     search: getValue(params.search) ?? "",
@@ -27,7 +28,7 @@ export default async function AssetsPage({
     page: Number(getValue(params.page) ?? "1") || 1,
   };
 
-  const data = await listAssets({
+  const data = await listAssets(activeOrganization.organization.id, {
     search: filters.search,
     type: filters.type,
     regionId: filters.regionId,

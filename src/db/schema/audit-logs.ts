@@ -7,6 +7,7 @@ import {
   index,
 } from "drizzle-orm/pg-core";
 import { profiles } from "./profiles";
+import { organizations } from "./organizations";
 
 /**
  * Audit Logs
@@ -45,6 +46,9 @@ export const auditLogs = pgTable(
   "audit_logs",
   {
     id: uuid("id").primaryKey().defaultRandom(),
+    organizationId: uuid("organization_id").references(() => organizations.id, {
+      onDelete: "set null",
+    }),
 
     /**
      * FK → profiles.id — who performed the action.
@@ -91,6 +95,7 @@ export const auditLogs = pgTable(
   },
   (table) => [
     // ─── Operational indexes ──────────────────────────────────────────
+    index("idx_audit_org").on(table.organizationId),
     index("idx_audit_user").on(table.userId),
     index("idx_audit_resource").on(table.resourceType, table.resourceId),
     index("idx_audit_action").on(table.action),

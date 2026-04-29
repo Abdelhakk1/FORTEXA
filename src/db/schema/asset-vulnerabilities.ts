@@ -17,6 +17,7 @@ import { assets } from "./assets";
 import { cves } from "./cves";
 import { scoringPolicies } from "./scoring-policies";
 import { scanImports } from "./scan-imports";
+import { organizations } from "./organizations";
 
 /**
  * Asset Vulnerabilities
@@ -42,6 +43,9 @@ export const assetVulnerabilities = pgTable(
   "asset_vulnerabilities",
   {
     id: uuid("id").primaryKey().defaultRandom(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
 
     /**
      * FK → assets.id
@@ -123,6 +127,17 @@ export const assetVulnerabilities = pgTable(
     unique("uq_asset_vulnerability").on(table.assetId, table.cveId),
 
     // ─── Operational indexes ──────────────────────────────────────────
+    index("idx_av_org").on(table.organizationId),
+    index("idx_av_org_asset_cve").on(
+      table.organizationId,
+      table.assetId,
+      table.cveId
+    ),
+    index("idx_av_org_status_risk").on(
+      table.organizationId,
+      table.status,
+      table.riskScore
+    ),
     index("idx_av_asset").on(table.assetId),
     index("idx_av_cve").on(table.cveId),
     index("idx_av_status").on(table.status),
@@ -136,6 +151,9 @@ export const assetVulnerabilities = pgTable(
      */
     index("idx_av_sla_actionable")
       .on(table.slaDue)
+      .where(sql`${table.status} in ('new', 'open', 'reopened')`),
+    index("idx_av_org_sla_actionable")
+      .on(table.organizationId, table.slaDue)
       .where(sql`${table.status} in ('new', 'open', 'reopened')`),
   ]
 );

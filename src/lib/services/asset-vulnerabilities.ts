@@ -163,8 +163,8 @@ export interface AssetVulnerabilityDetailData {
   };
 }
 
-function buildWhere(filters: AssetVulnerabilityFilters) {
-  const clauses: SQL[] = [];
+function buildWhere(organizationId: string, filters: AssetVulnerabilityFilters) {
+  const clauses: SQL[] = [eq(assetVulnerabilities.organizationId, organizationId)];
 
   if (filters.status && filters.status !== "all") {
     clauses.push(
@@ -197,6 +197,7 @@ function buildWhere(filters: AssetVulnerabilityFilters) {
 }
 
 export async function listAssetVulnerabilities(
+  organizationId: string,
   filters: AssetVulnerabilityFilters = {}
 ) {
   const db = getDb();
@@ -209,7 +210,7 @@ export async function listAssetVulnerabilities(
     return buildPaginatedResult([], 0, pagination);
   }
 
-  const where = buildWhere(filters);
+  const where = buildWhere(organizationId, filters);
   const orderBy =
     filters.sortBy === "slaDue"
       ? desc(assetVulnerabilities.slaDue)
@@ -271,6 +272,7 @@ const lifecycleLabels: Record<string, string> = {
 };
 
 export async function getAssetVulnerabilityDetail(
+  organizationId: string,
   assetVulnerabilityId: string
 ): Promise<AssetVulnerabilityDetailData | null> {
   const db = getDb();
@@ -293,7 +295,12 @@ export async function getAssetVulnerabilityDetail(
       assetVulnerabilityEnrichments,
       eq(assetVulnerabilities.id, assetVulnerabilityEnrichments.assetVulnerabilityId)
     )
-    .where(eq(assetVulnerabilities.id, assetVulnerabilityId))
+    .where(
+      and(
+        eq(assetVulnerabilities.organizationId, organizationId),
+        eq(assetVulnerabilities.id, assetVulnerabilityId)
+      )
+    )
     .limit(1);
 
   if (!row) {
@@ -311,7 +318,12 @@ export async function getAssetVulnerabilityDetail(
         })
         .from(assetVulnerabilityEvents)
         .innerJoin(scanImports, eq(assetVulnerabilityEvents.scanImportId, scanImports.id))
-        .where(eq(assetVulnerabilityEvents.assetVulnerabilityId, assetVulnerabilityId))
+        .where(
+          and(
+            eq(assetVulnerabilityEvents.organizationId, organizationId),
+            eq(assetVulnerabilityEvents.assetVulnerabilityId, assetVulnerabilityId)
+          )
+        )
         .orderBy(desc(assetVulnerabilityEvents.createdAt))
         .limit(1),
       db
@@ -334,7 +346,8 @@ export async function getAssetVulnerabilityDetail(
         .where(
           and(
             eq(scanFindings.matchedAssetId, row.asset.id),
-            eq(scanFindings.matchedCveId, row.cve.id)
+            eq(scanFindings.matchedCveId, row.cve.id),
+            eq(scanFindings.organizationId, organizationId)
           )
         )
         .orderBy(desc(scanFindings.lastSeen))
@@ -342,7 +355,12 @@ export async function getAssetVulnerabilityDetail(
       db
         .select()
         .from(assetVulnerabilityEvents)
-        .where(eq(assetVulnerabilityEvents.assetVulnerabilityId, assetVulnerabilityId))
+        .where(
+          and(
+            eq(assetVulnerabilityEvents.organizationId, organizationId),
+            eq(assetVulnerabilityEvents.assetVulnerabilityId, assetVulnerabilityId)
+          )
+        )
         .orderBy(desc(assetVulnerabilityEvents.createdAt))
         .limit(20),
       db
@@ -356,6 +374,7 @@ export async function getAssetVulnerabilityDetail(
         .where(
           and(
             eq(assetVulnerabilities.cveId, row.cve.id),
+            eq(assetVulnerabilities.organizationId, organizationId),
             ne(assetVulnerabilities.id, assetVulnerabilityId)
           )
         )
@@ -368,13 +387,23 @@ export async function getAssetVulnerabilityDetail(
         })
         .from(remediationTasks)
         .leftJoin(profiles, eq(remediationTasks.assignedTo, profiles.id))
-        .where(eq(remediationTasks.assetVulnerabilityId, assetVulnerabilityId))
+        .where(
+          and(
+            eq(remediationTasks.organizationId, organizationId),
+            eq(remediationTasks.assetVulnerabilityId, assetVulnerabilityId)
+          )
+        )
         .orderBy(desc(remediationTasks.updatedAt))
         .limit(10),
       db
         .select()
         .from(alerts)
-        .where(eq(alerts.relatedAssetVulnerabilityId, assetVulnerabilityId))
+        .where(
+          and(
+            eq(alerts.organizationId, organizationId),
+            eq(alerts.relatedAssetVulnerabilityId, assetVulnerabilityId)
+          )
+        )
         .orderBy(desc(alerts.createdAt))
         .limit(10),
       db
@@ -515,6 +544,7 @@ export async function getAssetVulnerabilityDetail(
 }
 
 export async function resolveAssetVulnerabilityIdFromRoute(
+  organizationId: string,
   routeId: string
 ): Promise<string | null> {
   const db = getDb();
@@ -532,7 +562,12 @@ export async function resolveAssetVulnerabilityIdFromRoute(
     })
     .from(assetVulnerabilities)
     .innerJoin(cves, eq(assetVulnerabilities.cveId, cves.id))
-    .where(eq(cves.cveId, routeId))
+    .where(
+      and(
+        eq(assetVulnerabilities.organizationId, organizationId),
+        eq(cves.cveId, routeId)
+      )
+    )
     .orderBy(desc(assetVulnerabilities.riskScore), desc(assetVulnerabilities.lastSeen))
     .limit(25);
 
@@ -548,6 +583,7 @@ export async function resolveAssetVulnerabilityIdFromRoute(
 }
 
 export async function updateAssetVulnerabilityStatus(input: {
+  organizationId: string;
   id: string;
   status: typeof assetVulnerabilities.$inferSelect.status;
   note?: string | null;
@@ -565,7 +601,12 @@ export async function updateAssetVulnerabilityStatus(input: {
   const [current] = await db
     .select()
     .from(assetVulnerabilities)
-    .where(eq(assetVulnerabilities.id, input.id))
+    .where(
+      and(
+        eq(assetVulnerabilities.organizationId, input.organizationId),
+        eq(assetVulnerabilities.id, input.id)
+      )
+    )
     .limit(1);
 
   if (!current) {
@@ -579,7 +620,12 @@ export async function updateAssetVulnerabilityStatus(input: {
       notes: input.note === undefined ? current.notes : input.note ?? null,
       updatedAt: new Date(),
     })
-    .where(eq(assetVulnerabilities.id, input.id))
+    .where(
+      and(
+        eq(assetVulnerabilities.organizationId, input.organizationId),
+        eq(assetVulnerabilities.id, input.id)
+      )
+    )
     .returning();
 
   await db
@@ -601,11 +647,13 @@ export async function updateAssetVulnerabilityStatus(input: {
     .where(
       and(
         eq(alerts.relatedAssetVulnerabilityId, input.id),
+        eq(alerts.organizationId, input.organizationId),
         inArray(alerts.status, ["new", "acknowledged", "in_progress"])
       )
     );
 
   await db.insert(assetVulnerabilityEvents).values({
+    organizationId: input.organizationId,
     assetVulnerabilityId: input.id,
     eventType: "status_changed",
     beforeStatus: current.status,

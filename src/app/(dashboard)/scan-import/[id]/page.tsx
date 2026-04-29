@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation";
-import { requirePermission } from "@/lib/auth";
+import { requireActiveOrganization, requirePermission } from "@/lib/auth";
 import { getScanImportDetail } from "@/lib/services/scan-imports";
 import ImportDetailClient from "./scan-import-detail-client";
 
@@ -11,8 +11,9 @@ export default async function ScanImportDetailPage({
   params: Params;
 }) {
   await requirePermission("scan_imports.read");
+  const activeOrganization = await requireActiveOrganization();
   const { id } = await params;
-  const data = await getScanImportDetail(id);
+  const data = await getScanImportDetail(activeOrganization.organization.id, id);
 
   if (!data) {
     notFound();

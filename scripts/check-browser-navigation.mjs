@@ -9,7 +9,7 @@ async function signIn(page, credentials) {
   await page.fill("#password", credentials.password);
   await Promise.all([
     page.waitForURL("**/dashboard", { timeout: 30_000 }),
-    page.getByRole("button", { name: /continue/i }).click(),
+    page.locator("form").getByRole("button", { name: /^sign in$/i }).click(),
   ]);
   await page.getByRole("heading", { name: "Security Dashboard", exact: true }).waitFor({
     state: "visible",
@@ -62,6 +62,8 @@ try {
     await assertClientNavigation(page, "Assets", "Asset Management"),
     await assertClientNavigation(page, "Vulnerabilities", "Vulnerability Management"),
     await assertClientNavigation(page, "Remediation", "Remediation"),
+    await assertClientNavigation(page, "Reports", "Reports"),
+    await assertClientNavigation(page, "Settings", "Settings"),
     await assertClientNavigation(page, "Dashboard", "Security Dashboard"),
   ];
   const failedClientTransitions = transitions.filter(

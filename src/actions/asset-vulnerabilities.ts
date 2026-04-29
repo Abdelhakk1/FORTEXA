@@ -2,11 +2,48 @@
 
 import { revalidatePath } from "next/cache";
 import { logAuditEvent } from "@/lib/audit";
-import { requirePermission } from "@/lib/auth";
+import { requireActiveOrganization, requirePermission } from "@/lib/auth";
 import { ok, toActionResult, type ActionResult } from "@/lib/errors";
 import { measureServerTiming } from "@/lib/observability/timing";
 import { runAssetVulnerabilityEnrichment } from "@/lib/services/asset-vulnerability-enrichment";
 import { updateAssetVulnerabilityStatus } from "@/lib/services/asset-vulnerabilities";
+import { updateAiSettings } from "@/lib/services/organizations";
+
+export async function enableAiPlaybooksAction(): Promise<
+  ActionResult<{ enabled: true }>
+> {
+  return measureServerTiming(
+    "action.assetVulnerabilities.enableAiPlaybooks",
+    async () => {
+      try {
+        const identity = await requirePermission("cves.enrich");
+        const activeOrganization = await requireActiveOrganization();
+
+        await updateAiSettings(activeOrganization.organization.id, {
+          enabled: true,
+          consentAccepted: true,
+          dataPolicy: "minimal_evidence",
+        });
+
+        await logAuditEvent({
+          organizationId: activeOrganization.organization.id,
+          userId: identity.profile?.id ?? null,
+          action: "organization.ai_playbooks_enabled",
+          resourceType: "organization",
+          resourceId: activeOrganization.organization.id,
+          details: { source: "just_in_time_consent" },
+        });
+
+        revalidatePath("/settings");
+        return ok({ enabled: true });
+      } catch (error) {
+        return toActionResult(error);
+      }
+    },
+    undefined,
+    (result) => ({ ok: result.ok, code: result.ok ? "ok" : result.code })
+  );
+}
 
 export async function retryAssetVulnerabilityEnrichmentAction(input: {
   assetVulnerabilityId: string;
@@ -22,17 +59,20 @@ export async function retryAssetVulnerabilityEnrichmentAction(input: {
     async () => {
       try {
         const identity = await requirePermission("cves.enrich");
+        const activeOrganization = await requireActiveOrganization();
 
         const inline = await runAssetVulnerabilityEnrichment(
           input.assetVulnerabilityId,
           {
             force: input.force ?? true,
+            organizationId: activeOrganization.organization.id,
           }
         );
 
         revalidatePath(`/vulnerabilities/${input.assetVulnerabilityId}`);
 
         await logAuditEvent({
+          organizationId: activeOrganization.organization.id,
           userId: identity.profile?.id ?? null,
           action: inline.ok
             ? "asset_vulnerability.ai_retry_completed"
@@ -74,12 +114,15 @@ export async function updateAssetVulnerabilityStatusAction(input: {
     async () => {
       try {
         const identity = await requirePermission("asset_vulnerabilities.write");
+        const activeOrganization = await requireActiveOrganization();
         const row = await updateAssetVulnerabilityStatus({
           ...input,
+          organizationId: activeOrganization.organization.id,
           actorProfileId: identity.profile?.id ?? null,
         });
 
         await logAuditEvent({
+          organizationId: activeOrganization.organization.id,
           userId: identity.profile?.id ?? null,
           action: "asset_vulnerability.status_updated",
           resourceType: "asset_vulnerability",
