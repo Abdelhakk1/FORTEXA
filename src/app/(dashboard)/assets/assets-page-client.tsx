@@ -3,7 +3,7 @@
 import { useMemo, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Download, Eye, Server, Monitor, Globe, Shield, Plus, Upload } from "lucide-react";
+import { Download, Eye, Landmark, MapPin, Shield, Plus, Upload } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -12,7 +12,11 @@ import { SearchInput } from "@/components/shared/search-input";
 import { EmptyState } from "@/components/shared/empty-state";
 import { PaginationControls } from "@/components/shared/pagination-controls";
 import { SeverityBadge, PriorityBadge, StatusBadge } from "@/components/shared/badges";
-import { createAssetAction, importAssetsCsvAction } from "@/actions/assets";
+import {
+  bulkUpdateAssetClassificationAction,
+  createAssetAction,
+  importAssetsCsvAction,
+} from "@/actions/assets";
 import { downloadCsv } from "@/lib/download";
 import type { AssetsPageData } from "@/lib/services/assets";
 
@@ -25,8 +29,26 @@ interface AssetsPageClientProps {
     criticality: string;
     status: string;
     exposureLevel: string;
+    gabExposureType: string;
     page: number;
   };
+}
+
+const gabExposureOptions = [
+  { value: "unknown", label: "Unknown" },
+  { value: "indoor_agency", label: "Indoor agency GAB" },
+  { value: "outdoor_agency", label: "Outdoor agency GAB" },
+  { value: "outdoor_commercial_center", label: "Outdoor commercial-center GAB" },
+  { value: "outdoor_public_street", label: "Outdoor public/street GAB" },
+];
+
+function templateKeyForExposure(value: string) {
+  if (value === "indoor_agency") return "indoor_agency";
+  if (value === "outdoor_agency") return "outdoor_agency";
+  if (value === "outdoor_commercial_center" || value === "outdoor_public_street") {
+    return "outdoor_public_commercial";
+  }
+  return null;
 }
 
 export function AssetsPageClient({ data, filters }: AssetsPageClientProps) {
@@ -38,14 +60,22 @@ export function AssetsPageClient({ data, filters }: AssetsPageClientProps) {
   const [formState, setFormState] = useState({
     assetCode: "",
     name: "",
-    type: "other",
     regionId: "all",
     branch: "",
     ipAddress: "",
     criticality: "medium",
     exposureLevel: "internal",
+    gabExposureType: "unknown",
     status: "active",
   });
+  const [selectedAssetCodes, setSelectedAssetCodes] = useState<Set<string>>(
+    () => new Set()
+  );
+  const [bulkOperation, setBulkOperation] = useState<
+    "set_exposure" | "apply_template" | "clear_custom_override" | "copy_cidt_from_asset"
+  >("apply_template");
+  const [bulkExposure, setBulkExposure] = useState("indoor_agency");
+  const [bulkSourceAssetCode, setBulkSourceAssetCode] = useState("");
   const [formMessage, setFormMessage] = useState<string | null>(null);
   const [csvMessage, setCsvMessage] = useState<string | null>(null);
   const [csvSummary, setCsvSummary] = useState<{
@@ -56,6 +86,7 @@ export function AssetsPageClient({ data, filters }: AssetsPageClientProps) {
   } | null>(null);
   const [isCreatingAsset, startCreateAsset] = useTransition();
   const [isImportingCsv, startImportCsv] = useTransition();
+  const [isBulkUpdating, startBulkUpdate] = useTransition();
 
   const activeFilters = useMemo(
     () =>
@@ -64,7 +95,7 @@ export function AssetsPageClient({ data, filters }: AssetsPageClientProps) {
         filters.regionId,
         filters.criticality,
         filters.status,
-        filters.exposureLevel,
+        filters.gabExposureType,
       ].filter((value) => value !== "all").length + (filters.search ? 1 : 0),
     [filters]
   );
@@ -86,6 +117,9 @@ export function AssetsPageClient({ data, filters }: AssetsPageClientProps) {
     if (merged.exposureLevel !== "all") {
       params.set("exposureLevel", merged.exposureLevel);
     }
+    if (merged.gabExposureType !== "all") {
+      params.set("gabExposureType", merged.gabExposureType);
+    }
     if ((merged.page ?? 1) > 1) params.set("page", String(merged.page));
 
     router.replace(params.toString() ? `${pathname}?${params}` : pathname, {
@@ -95,6 +129,56 @@ export function AssetsPageClient({ data, filters }: AssetsPageClientProps) {
 
   const clearFilters = () => {
     router.replace(pathname, { scroll: false });
+  };
+
+  const selectedCount = selectedAssetCodes.size;
+  const allVisibleSelected =
+    data.assets.items.length > 0 &&
+    data.assets.items.every((asset) => selectedAssetCodes.has(asset.id));
+  const selectedAssetCodeList = Array.from(selectedAssetCodes);
+  const selectedExposurePreview = useMemo(() => {
+    const templateKey = templateKeyForExposure(formState.gabExposureType);
+    const template = templateKey
+      ? data.gabCidtTemplates.find((row) => row.templateKey === templateKey)
+      : null;
+
+    if (template) {
+      return `Resolved CIDT: C${template.cidtConfidentiality} I${template.cidtIntegrity} D${template.cidtAvailability} T${template.cidtTraceability} (${template.sensitivity}) from ${template.label}`;
+    }
+
+    return `Resolved CIDT: C${data.atmPaymentServicesCidt.cidtConfidentiality} I${data.atmPaymentServicesCidt.cidtIntegrity} D${data.atmPaymentServicesCidt.cidtAvailability} T${data.atmPaymentServicesCidt.cidtTraceability} (${data.atmPaymentServicesCidt.sensitivity}) from ATM Payment Services`;
+  }, [
+    data.atmPaymentServicesCidt,
+    data.gabCidtTemplates,
+    formState.gabExposureType,
+  ]);
+
+  const toggleAssetSelection = (assetCode: string) => {
+    setSelectedAssetCodes((current) => {
+      const next = new Set(current);
+      if (next.has(assetCode)) {
+        next.delete(assetCode);
+      } else {
+        next.add(assetCode);
+      }
+      return next;
+    });
+  };
+
+  const toggleAllVisible = () => {
+    setSelectedAssetCodes((current) => {
+      const next = new Set(current);
+      if (allVisibleSelected) {
+        for (const asset of data.assets.items) {
+          next.delete(asset.id);
+        }
+      } else {
+        for (const asset of data.assets.items) {
+          next.add(asset.id);
+        }
+      }
+      return next;
+    });
   };
 
   const handleExport = () => {
@@ -107,12 +191,17 @@ export function AssetsPageClient({ data, filters }: AssetsPageClientProps) {
         { key: "branch", label: "Branch" },
         { key: "region", label: "Region" },
         { key: "criticality", label: "Criticality" },
-        { key: "exposureLevel", label: "Exposure" },
+        { key: "exposureLevel", label: "Network Exposure" },
+        { key: "gabExposureType", label: "GAB Exposure" },
+        { key: "cidtSensitivity", label: "GAB Sensitivity" },
         { key: "vulnerabilityCount", label: "Vulnerability Count" },
         { key: "maxSeverity", label: "Max Severity" },
         { key: "status", label: "Status" },
       ],
-      rows: data.assets.items,
+      rows: data.assets.items.map((asset) => ({
+        ...asset,
+        cidtSensitivity: asset.cidt.sensitivity,
+      })),
     });
   };
 
@@ -122,11 +211,13 @@ export function AssetsPageClient({ data, filters }: AssetsPageClientProps) {
       const result = await createAssetAction({
         assetCode: formState.assetCode,
         name: formState.name,
-        type: formState.type as Parameters<typeof createAssetAction>[0]["type"],
+        type: "gab",
         branch: formState.branch,
         ipAddress: formState.ipAddress,
         criticality: formState.criticality as Parameters<typeof createAssetAction>[0]["criticality"],
         exposureLevel: formState.exposureLevel as Parameters<typeof createAssetAction>[0]["exposureLevel"],
+        gabExposureType:
+          formState.gabExposureType as Parameters<typeof createAssetAction>[0]["gabExposureType"],
         status: formState.status as Parameters<typeof createAssetAction>[0]["status"],
         regionId: formState.regionId === "all" ? null : formState.regionId,
       });
@@ -139,16 +230,43 @@ export function AssetsPageClient({ data, filters }: AssetsPageClientProps) {
       setFormState({
         assetCode: "",
         name: "",
-        type: "other",
         regionId: "all",
         branch: "",
         ipAddress: "",
         criticality: "medium",
         exposureLevel: "internal",
+        gabExposureType: "unknown",
         status: "active",
       });
       setFormMessage("Asset created successfully.");
       setShowCreateForm(false);
+      router.refresh();
+    });
+  };
+
+  const submitBulkClassification = () => {
+    startBulkUpdate(async () => {
+      setFormMessage(null);
+      const result = await bulkUpdateAssetClassificationAction({
+        assetCodes: selectedAssetCodeList,
+        operation: bulkOperation,
+        gabExposureType:
+          bulkOperation === "set_exposure" || bulkOperation === "apply_template"
+            ? (bulkExposure as Parameters<
+                typeof bulkUpdateAssetClassificationAction
+              >[0]["gabExposureType"])
+            : undefined,
+        sourceAssetCode:
+          bulkOperation === "copy_cidt_from_asset" ? bulkSourceAssetCode : undefined,
+      });
+
+      if (!result.ok) {
+        setFormMessage(result.message);
+        return;
+      }
+
+      setFormMessage(`${result.data.updated} GAB classification update(s) saved.`);
+      setSelectedAssetCodes(new Set());
       router.refresh();
     });
   };
@@ -189,8 +307,8 @@ export function AssetsPageClient({ data, filters }: AssetsPageClientProps) {
   return (
     <div>
       <PageHeader
-        title="Asset Management"
-        description={`${data.summary.totalAssets} monitored assets across ${data.regionOptions.length} regions`}
+        title="GAB Asset Management"
+        description={`${data.summary.totalAssets} monitored GABs across ${data.regionOptions.length} regions`}
         actions={
           <div className="flex flex-wrap items-center gap-2">
             <Button
@@ -202,7 +320,7 @@ export function AssetsPageClient({ data, filters }: AssetsPageClientProps) {
               }}
               className="border-[#E9ECEF] bg-white text-[#1A1A2E] dark:border-[#27272a] dark:bg-[#141419] dark:text-[#fafafa]"
             >
-              <Plus className="mr-2 h-4 w-4" /> New Asset
+              <Plus className="mr-2 h-4 w-4" /> New GAB
             </Button>
             <Button
               type="button"
@@ -229,14 +347,6 @@ export function AssetsPageClient({ data, filters }: AssetsPageClientProps) {
               <div className="grid gap-3 md:grid-cols-4">
                 <input value={formState.assetCode} onChange={(event) => setFormState((current) => ({ ...current, assetCode: event.target.value }))} placeholder="Asset code" className="h-10 rounded-lg border border-[#E9ECEF] bg-[#F9FAFB] px-3 text-sm text-[#1A1A2E] outline-none focus:border-[#93C5FD] dark:border-[#27272a] dark:bg-[#1a1a22] dark:text-[#fafafa]" />
                 <input value={formState.name} onChange={(event) => setFormState((current) => ({ ...current, name: event.target.value }))} placeholder="Asset name" className="h-10 rounded-lg border border-[#E9ECEF] bg-[#F9FAFB] px-3 text-sm text-[#1A1A2E] outline-none focus:border-[#93C5FD] dark:border-[#27272a] dark:bg-[#1a1a22] dark:text-[#fafafa]" />
-                <Select value={formState.type} onValueChange={(value) => setFormState((current) => ({ ...current, type: value || "other" }))}>
-                  <SelectTrigger className="h-10 border-[#E9ECEF] bg-[#F9FAFB] text-[#1A1A2E] dark:border-[#27272a] dark:bg-[#1a1a22] dark:text-[#fafafa]"><SelectValue placeholder="Type" /></SelectTrigger>
-                  <SelectContent className="border-[#E9ECEF] bg-white dark:border-[#27272a] dark:bg-[#141419]">
-                    {["atm", "gab", "server", "network_device", "kiosk", "workstation", "other"].map((type) => (
-                      <SelectItem key={type} value={type}>{type.replaceAll("_", " ")}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
                 <Select value={formState.regionId} onValueChange={(value) => setFormState((current) => ({ ...current, regionId: value || "all" }))}>
                   <SelectTrigger className="h-10 border-[#E9ECEF] bg-[#F9FAFB] text-[#1A1A2E] dark:border-[#27272a] dark:bg-[#1a1a22] dark:text-[#fafafa]"><SelectValue placeholder="Region" /></SelectTrigger>
                   <SelectContent className="border-[#E9ECEF] bg-white dark:border-[#27272a] dark:bg-[#141419]">
@@ -256,20 +366,25 @@ export function AssetsPageClient({ data, filters }: AssetsPageClientProps) {
                     ))}
                   </SelectContent>
                 </Select>
-                <Select value={formState.exposureLevel} onValueChange={(value) => setFormState((current) => ({ ...current, exposureLevel: value || "internal" }))}>
-                  <SelectTrigger className="h-10 border-[#E9ECEF] bg-[#F9FAFB] text-[#1A1A2E] dark:border-[#27272a] dark:bg-[#1a1a22] dark:text-[#fafafa]"><SelectValue placeholder="Exposure" /></SelectTrigger>
+                <Select value={formState.gabExposureType} onValueChange={(value) => setFormState((current) => ({ ...current, gabExposureType: value || "unknown" }))}>
+                  <SelectTrigger className="h-10 border-[#E9ECEF] bg-[#F9FAFB] text-[#1A1A2E] dark:border-[#27272a] dark:bg-[#1a1a22] dark:text-[#fafafa]"><SelectValue placeholder="GAB exposure" /></SelectTrigger>
                   <SelectContent className="border-[#E9ECEF] bg-white dark:border-[#27272a] dark:bg-[#141419]">
-                    <SelectItem value="internet_facing">internet facing</SelectItem>
-                    <SelectItem value="internal">internal</SelectItem>
-                    <SelectItem value="isolated">isolated</SelectItem>
+                    {gabExposureOptions.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
+              <div className="rounded-xl border border-[#BFDBFE] bg-[#EFF6FF] px-4 py-3 text-xs leading-5 text-[#1E3A8A] dark:border-[#1d4ed8]/60 dark:bg-[#0A1A2D] dark:text-[#BFDBFE]">
+                {selectedExposurePreview}
+              </div>
               <div className="flex flex-wrap items-center gap-2">
                 <Button type="button" onClick={submitAsset} disabled={isCreatingAsset} className="gradient-accent border-0 text-white">
-                  {isCreatingAsset ? "Creating..." : "Create Asset"}
+                  {isCreatingAsset ? "Creating..." : "Create GAB"}
                 </Button>
-                <span className="text-xs text-[#6B7280] dark:text-[#94A3B8]">Manual creation writes to the real asset inventory and seeds report templates if this is the first asset.</span>
+                <span className="text-xs text-[#6B7280] dark:text-[#94A3B8]">Every asset is treated as a GAB supporting ATM Payment Services.</span>
               </div>
             </div>
           )}
@@ -285,7 +400,7 @@ export function AssetsPageClient({ data, filters }: AssetsPageClientProps) {
               />
               <div className="rounded-xl border border-dashed border-[#D1D5DB] p-4 dark:border-[#3a3a42]">
                 <p className="text-sm font-medium text-[#1A1A2E] dark:text-[#fafafa]">CSV column contract</p>
-                <p className="mt-1 text-xs text-[#6B7280] dark:text-[#94A3B8]">Supported columns: asset_code, name, type, hostname, ip_address, domain, region_code, criticality, exposure_level, owner_email, owner_id, branch, manufacturer, model, location, os_version, status.</p>
+                <p className="mt-1 text-xs text-[#6B7280] dark:text-[#94A3B8]">Supported columns: asset_code, name, type, hostname, ip_address, domain, region_code, criticality, gab_exposure_type, cidt_confidentiality, cidt_integrity, cidt_availability, cidt_traceability, owner_email, owner_id, branch, manufacturer, model, location, os_version, status.</p>
                 <Button type="button" onClick={() => csvInputRef.current?.click()} disabled={isImportingCsv} className="mt-3 gradient-accent border-0 text-white">
                   <Upload className="mr-2 h-4 w-4" /> {isImportingCsv ? "Importing..." : "Choose CSV"}
                 </Button>
@@ -319,34 +434,50 @@ export function AssetsPageClient({ data, filters }: AssetsPageClientProps) {
 
       <div className="mb-5 grid grid-cols-2 gap-4 animate-stagger md:grid-cols-4">
         <Card className="flex flex-col items-center justify-center gap-2 border border-[#E9ECEF] bg-white p-4 text-center dark:border-[#27272a] dark:bg-[#141419]">
-          <div className="mb-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-blue-50 text-blue-600 dark:bg-[#0A1A2D] dark:text-[#38BDF8]"><Server className="h-4 w-4" /></div>
+          <div className="mb-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-blue-50 text-blue-600 dark:bg-[#0A1A2D] dark:text-[#38BDF8]"><Landmark className="h-4 w-4" /></div>
           <div>
             <p className="mb-1 text-3xl font-extrabold leading-none text-[#1A1A2E] dark:text-[#fafafa]">{data.summary.totalAssets}</p>
-            <p className="text-xs font-medium uppercase tracking-wide text-[#6B7280] dark:text-[#94A3B8]">Total Assets</p>
+            <p className="text-xs font-medium uppercase tracking-wide text-[#6B7280] dark:text-[#94A3B8]">Total GABs</p>
           </div>
         </Card>
         <Card className="flex flex-col items-center justify-center gap-2 border border-[#E9ECEF] bg-white p-4 text-center dark:border-[#27272a] dark:bg-[#141419]">
-          <div className="mb-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#0C5CAB]/10 text-[#0C5CAB] dark:bg-[#0A1A2D] dark:text-[#60A5FA]"><Monitor className="h-4 w-4" /></div>
+          <div className="mb-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#0C5CAB]/10 text-[#0C5CAB] dark:bg-[#0A1A2D] dark:text-[#60A5FA]"><Shield className="h-4 w-4" /></div>
           <div>
-            <p className="mb-1 text-3xl font-extrabold leading-none text-[#1A1A2E] dark:text-[#fafafa]">{data.summary.atmCount}</p>
-            <p className="text-xs font-medium uppercase tracking-wide text-[#6B7280] dark:text-[#94A3B8]">ATMs</p>
+            <p className="mb-1 text-3xl font-extrabold leading-none text-[#1A1A2E] dark:text-[#fafafa]">{data.summary.gabCount}</p>
+            <p className="text-xs font-medium uppercase tracking-wide text-[#6B7280] dark:text-[#94A3B8]">GAB records</p>
           </div>
         </Card>
         <Card className="flex flex-col items-center justify-center gap-2 border border-[#E9ECEF] bg-white p-4 text-center dark:border-[#27272a] dark:bg-[#141419]">
           <div className="mb-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-purple-50 text-purple-600 dark:bg-[#1A0A2D] dark:text-[#C084FC]"><Shield className="h-4 w-4" /></div>
           <div>
-            <p className="mb-1 text-3xl font-extrabold leading-none text-[#1A1A2E] dark:text-[#fafafa]">{data.summary.gabCount}</p>
-            <p className="text-xs font-medium uppercase tracking-wide text-[#6B7280] dark:text-[#94A3B8]">GABs</p>
+            <p className="mb-1 text-3xl font-extrabold leading-none text-[#1A1A2E] dark:text-[#fafafa]">{data.summary.unknownGabExposureCount}</p>
+            <p className="text-xs font-medium uppercase tracking-wide text-[#6B7280] dark:text-[#94A3B8]">Need classification</p>
           </div>
         </Card>
         <Card className="flex flex-col items-center justify-center gap-2 border border-[#E9ECEF] bg-white p-4 text-center dark:border-[#27272a] dark:bg-[#141419]">
-          <div className="mb-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-red-50 text-red-600 dark:bg-[#3B0F0F] dark:text-[#F87171]"><Globe className="h-4 w-4" /></div>
+          <div className="mb-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-red-50 text-red-600 dark:bg-[#3B0F0F] dark:text-[#F87171]"><MapPin className="h-4 w-4" /></div>
           <div>
-            <p className="mb-1 text-3xl font-extrabold leading-none text-red-600 dark:text-[#F87171]">{data.summary.internetFacing}</p>
-            <p className="text-xs font-medium uppercase tracking-wide text-[#6B7280] dark:text-[#94A3B8]">Internet-Facing</p>
+            <p className="mb-1 text-3xl font-extrabold leading-none text-red-600 dark:text-[#F87171]">{data.summary.outdoorGabs}</p>
+            <p className="text-xs font-medium uppercase tracking-wide text-[#6B7280] dark:text-[#94A3B8]">Outdoor GABs</p>
           </div>
         </Card>
       </div>
+
+      {data.summary.unknownGabExposureCount > 0 ? (
+        <button
+          type="button"
+          onClick={() => updateFilters({ gabExposureType: "unknown", page: 1 })}
+          className="mb-4 flex w-full items-center justify-between rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-left text-sm text-amber-900 transition hover:border-amber-300 hover:bg-amber-100 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100 dark:hover:bg-amber-500/15"
+        >
+          <span className="font-medium">
+            {data.summary.unknownGabExposureCount} GAB
+            {data.summary.unknownGabExposureCount === 1 ? "" : "s"} need classification
+          </span>
+          <span className="text-xs font-semibold uppercase tracking-wide">
+            Filter unknown
+          </span>
+        </button>
+      ) : null}
 
       <Card className="mb-4 border border-[#E9ECEF] bg-white p-4 dark:border-[#27272a] dark:bg-[#141419]">
         <div className="flex flex-wrap items-center gap-3">
@@ -365,11 +496,6 @@ export function AssetsPageClient({ data, filters }: AssetsPageClientProps) {
               <SelectItem value="all" className="cursor-pointer">All Types</SelectItem>
               <SelectItem value="atm" className="cursor-pointer">ATM</SelectItem>
               <SelectItem value="gab" className="cursor-pointer">GAB</SelectItem>
-              <SelectItem value="server" className="cursor-pointer">Server</SelectItem>
-              <SelectItem value="network_device" className="cursor-pointer">Network Device</SelectItem>
-              <SelectItem value="kiosk" className="cursor-pointer">Kiosk</SelectItem>
-              <SelectItem value="workstation" className="cursor-pointer">Workstation</SelectItem>
-              <SelectItem value="other" className="cursor-pointer">Other</SelectItem>
             </SelectContent>
           </Select>
           <Select
@@ -413,15 +539,17 @@ export function AssetsPageClient({ data, filters }: AssetsPageClientProps) {
             </SelectContent>
           </Select>
           <Select
-            value={filters.exposureLevel}
-            onValueChange={(value) => updateFilters({ exposureLevel: value ?? "all", page: 1 })}
+            value={filters.gabExposureType}
+            onValueChange={(value) => updateFilters({ gabExposureType: value ?? "all", page: 1 })}
           >
-            <SelectTrigger className="h-9 w-full cursor-pointer border-[#E9ECEF] bg-[#F9FAFB] text-[#6B7280] dark:border-[#27272a] dark:bg-[#1a1a22] dark:text-[#94A3B8] sm:w-[160px]"><SelectValue placeholder="Exposure" /></SelectTrigger>
+            <SelectTrigger className="h-9 w-full cursor-pointer border-[#E9ECEF] bg-[#F9FAFB] text-[#6B7280] dark:border-[#27272a] dark:bg-[#1a1a22] dark:text-[#94A3B8] sm:w-[220px]"><SelectValue placeholder="GAB Exposure" /></SelectTrigger>
             <SelectContent className="border-[#E9ECEF] bg-white dark:border-[#27272a] dark:bg-[#141419]">
-              <SelectItem value="all" className="cursor-pointer">All Exposure</SelectItem>
-              <SelectItem value="internet_facing" className="cursor-pointer">Internet-Facing</SelectItem>
-              <SelectItem value="internal" className="cursor-pointer">Internal</SelectItem>
-              <SelectItem value="isolated" className="cursor-pointer">Isolated</SelectItem>
+              <SelectItem value="all" className="cursor-pointer">All GAB Exposure</SelectItem>
+              {gabExposureOptions.map((option) => (
+                <SelectItem key={option.value} value={option.value} className="cursor-pointer">
+                  {option.label}
+                </SelectItem>
+              ))}
             </SelectContent>
           </Select>
           <button
@@ -437,10 +565,85 @@ export function AssetsPageClient({ data, filters }: AssetsPageClientProps) {
         </div>
       </Card>
 
+      {selectedCount > 0 ? (
+        <Card className="mb-4 border border-[#BFDBFE] bg-[#EFF6FF] p-4 dark:border-[#1d4ed8]/60 dark:bg-[#0A1A2D]">
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="text-sm font-semibold text-[#1E3A8A] dark:text-[#BFDBFE]">
+              {selectedCount} selected
+            </span>
+            <Select
+              value={bulkOperation}
+              onValueChange={(value) =>
+                setBulkOperation(
+                  (value || "apply_template") as typeof bulkOperation
+                )
+              }
+            >
+              <SelectTrigger className="h-9 w-full border-[#BFDBFE] bg-white text-[#1A1A2E] dark:border-[#1d4ed8]/60 dark:bg-[#141419] dark:text-[#fafafa] sm:w-[220px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent className="border-[#E9ECEF] bg-white dark:border-[#27272a] dark:bg-[#141419]">
+                <SelectItem value="apply_template">Apply CIDT template</SelectItem>
+                <SelectItem value="set_exposure">Set exposure only</SelectItem>
+                <SelectItem value="clear_custom_override">Clear custom CIDT</SelectItem>
+                <SelectItem value="copy_cidt_from_asset">Copy CIDT from GAB</SelectItem>
+              </SelectContent>
+            </Select>
+            {bulkOperation === "apply_template" || bulkOperation === "set_exposure" ? (
+              <Select value={bulkExposure} onValueChange={(value) => setBulkExposure(value || "indoor_agency")}>
+                <SelectTrigger className="h-9 w-full border-[#BFDBFE] bg-white text-[#1A1A2E] dark:border-[#1d4ed8]/60 dark:bg-[#141419] dark:text-[#fafafa] sm:w-[240px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="border-[#E9ECEF] bg-white dark:border-[#27272a] dark:bg-[#141419]">
+                  {gabExposureOptions.map((option) => (
+                    <SelectItem key={`bulk-${option.value}`} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            ) : null}
+            {bulkOperation === "copy_cidt_from_asset" ? (
+              <Select
+                value={bulkSourceAssetCode}
+                onValueChange={(value) => setBulkSourceAssetCode(value || "")}
+              >
+                <SelectTrigger className="h-9 w-full border-[#BFDBFE] bg-white text-[#1A1A2E] dark:border-[#1d4ed8]/60 dark:bg-[#141419] dark:text-[#fafafa] sm:w-[220px]">
+                  <SelectValue placeholder="Source GAB" />
+                </SelectTrigger>
+                <SelectContent className="border-[#E9ECEF] bg-white dark:border-[#27272a] dark:bg-[#141419]">
+                  {data.assets.items.map((asset) => (
+                    <SelectItem key={`source-${asset.id}`} value={asset.id}>
+                      {asset.id}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            ) : null}
+            <Button
+              type="button"
+              onClick={submitBulkClassification}
+              disabled={isBulkUpdating}
+              className="gradient-accent border-0 text-white"
+            >
+              {isBulkUpdating ? "Saving..." : "Apply"}
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => setSelectedAssetCodes(new Set())}
+              className="text-[#1E3A8A] hover:bg-white/70 dark:text-[#BFDBFE] dark:hover:bg-[#141419]"
+            >
+              Clear selection
+            </Button>
+          </div>
+        </Card>
+      ) : null}
+
       {data.assets.items.length === 0 ? (
         <Card className="border border-[#E9ECEF] bg-white dark:border-[#27272a] dark:bg-[#141419]">
           <EmptyState
-            icon={<Server className="h-7 w-7 text-[#0C5CAB] dark:text-[#60A5FA]" />}
+            icon={<Landmark className="h-7 w-7 text-[#0C5CAB] dark:text-[#60A5FA]" />}
             title="No assets match these filters"
             description="Try widening the filters or clear the current search to see the monitored asset inventory again."
             actionLabel="Clear filters"
@@ -454,12 +657,21 @@ export function AssetsPageClient({ data, filters }: AssetsPageClientProps) {
             {data.assets.items.map((asset) => (
               <div key={asset.id} className="rounded-xl border border-[#E9ECEF] p-4 dark:border-[#27272a]">
                 <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
+                  <div className="flex min-w-0 gap-3">
+                    <input
+                      type="checkbox"
+                      checked={selectedAssetCodes.has(asset.id)}
+                      onChange={() => toggleAssetSelection(asset.id)}
+                      aria-label={`Select ${asset.id}`}
+                      className="mt-1 h-4 w-4 rounded border-[#D1D5DB]"
+                    />
+                    <div className="min-w-0">
                     <p className="font-mono text-[11px] text-[#6B7280] dark:text-[#64748B]">{asset.id}</p>
                     <Link href={`/assets/${asset.id}`} prefetch={false} className="mt-1 block text-sm font-semibold text-[#1A1A2E] hover:text-[#0C5CAB] dark:text-[#fafafa] dark:hover:text-[#60A5FA]">
                       {asset.name}
                     </Link>
                     <p className="text-xs text-[#6B7280] dark:text-[#94A3B8]">{asset.model}</p>
+                    </div>
                   </div>
                   <Link href={`/assets/${asset.id}`} prefetch={false}>
                     <Button variant="ghost" size="sm" aria-label={`Open asset ${asset.name}`} className="h-9 w-9 p-0 text-[#6B7280] hover:bg-[#EFF6FF] hover:text-[#0C5CAB] dark:text-[#94A3B8] dark:hover:bg-[#1a1a22] dark:hover:text-[#60A5FA]">
@@ -473,8 +685,8 @@ export function AssetsPageClient({ data, filters }: AssetsPageClientProps) {
                     <p className="text-[#1A1A2E] dark:text-[#fafafa]">{asset.branch}</p>
                   </div>
                   <div>
-                    <p className="mb-1 text-[#9CA3AF] dark:text-[#64748B]">Exposure</p>
-                    <p className="text-[#1A1A2E] dark:text-[#fafafa]">{asset.exposureLevel}</p>
+                    <p className="mb-1 text-[#9CA3AF] dark:text-[#64748B]">GAB Exposure</p>
+                    <p className="text-[#1A1A2E] dark:text-[#fafafa]">{asset.gabExposureType}</p>
                   </div>
                   <div>
                     <p className="mb-1 text-[#9CA3AF] dark:text-[#64748B]">Severity</p>
@@ -498,7 +710,16 @@ export function AssetsPageClient({ data, filters }: AssetsPageClientProps) {
               <table className="w-full min-w-[1100px] text-sm">
                 <thead>
                   <tr className="dark-table-head border-b border-[#F3F4F6] dark:border-[#27272a]">
-                    {["Asset ID", "Name / Model", "Type", "Branch / Region", "Criticality", "Exposure", "Vulns", "Max Severity", "Priority", "Status", "Actions"].map((heading) => (
+                    <th className="w-10 px-4 py-3">
+                      <input
+                        type="checkbox"
+                        checked={allVisibleSelected}
+                        onChange={toggleAllVisible}
+                        aria-label="Select visible GABs"
+                        className="h-4 w-4 rounded border-[#D1D5DB]"
+                      />
+                    </th>
+                    {["Asset ID", "Name / Model", "Type", "Branch / Region", "Criticality", "GAB Exposure", "Vulns", "Max Severity", "Priority", "Status", "Actions"].map((heading) => (
                       <th key={heading} className="whitespace-nowrap px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-[#6B7280] dark:text-[#94A3B8]">{heading}</th>
                     ))}
                   </tr>
@@ -506,6 +727,15 @@ export function AssetsPageClient({ data, filters }: AssetsPageClientProps) {
                 <tbody>
                   {data.assets.items.map((asset) => (
                     <tr key={asset.id} className="dark-table-row border-b border-[#F3F4F6] last:border-0 dark:border-[#27272a] hover:bg-[#F9FAFB] dark:hover:bg-[#1a1a22]/50">
+                      <td className="px-4 py-3">
+                        <input
+                          type="checkbox"
+                          checked={selectedAssetCodes.has(asset.id)}
+                          onChange={() => toggleAssetSelection(asset.id)}
+                          aria-label={`Select ${asset.id}`}
+                          className="h-4 w-4 rounded border-[#D1D5DB]"
+                        />
+                      </td>
                       <td className="px-4 py-3 font-mono text-xs text-[#6B7280] dark:text-[#64748B]">{asset.id}</td>
                       <td className="px-4 py-3">
                         <Link href={`/assets/${asset.id}`} prefetch={false} className="text-sm font-medium text-[#1A1A2E] hover:text-[#0C5CAB] dark:text-[#fafafa] dark:hover:text-[#60A5FA]">{asset.name}</Link>
@@ -517,7 +747,12 @@ export function AssetsPageClient({ data, filters }: AssetsPageClientProps) {
                         <p className="text-xs text-[#6B7280] dark:text-[#94A3B8]">{asset.region}</p>
                       </td>
                       <td className="px-4 py-3"><SeverityBadge severity={asset.criticality.toUpperCase() as "CRITICAL" | "HIGH" | "MEDIUM" | "LOW"} /></td>
-                      <td className="px-4 py-3"><span className={`${asset.exposureLevel === "Internet-Facing" ? "text-red-600 dark:text-red-400" : asset.exposureLevel === "Internal" ? "text-blue-600 dark:text-blue-400" : "text-[#6B7280] dark:text-[#94A3B8]"} text-xs font-medium`}>{asset.exposureLevel}</span></td>
+                      <td className="px-4 py-3">
+                        <span className="text-xs font-medium text-[#1A1A2E] dark:text-[#fafafa]">{asset.gabExposureType}</span>
+                        <p className="mt-0.5 text-[11px] text-[#6B7280] dark:text-[#94A3B8]">
+                          {asset.cidt.sensitivity} · {asset.cidt.sourceLabel}
+                        </p>
+                      </td>
                       <td className="px-4 py-3 text-center font-semibold text-[#1A1A2E] dark:text-[#fafafa]">{asset.vulnerabilityCount}</td>
                       <td className="px-4 py-3"><SeverityBadge severity={asset.maxSeverity} /></td>
                       <td className="px-4 py-3"><PriorityBadge priority={asset.contextualPriority} /></td>

@@ -27,10 +27,14 @@ const tenantTables = [
   ["public", "remediation_tasks"],
   ["public", "generated_reports"],
   ["public", "report_definitions"],
+  ["public", "cve_enrichments"],
   ["public", "scan_findings"],
   ["public", "asset_vulnerabilities"],
   ["public", "scan_imports"],
   ["public", "assets"],
+  ["public", "asset_classification_rules"],
+  ["public", "gab_cidt_templates"],
+  ["public", "business_applications"],
   ["public", "sites"],
   ["public", "organization_invites"],
   ["public", "organization_members"],
@@ -146,6 +150,20 @@ async function countRows(sql, tables) {
   return counts;
 }
 
+async function countAiCveRecommendedControls(sql) {
+  if (!(await tableExists(sql, ["public", "cve_recommended_controls"]))) {
+    return 0;
+  }
+
+  const [row] = await sql`
+    select count(*)::int as count
+    from public.cve_recommended_controls
+    where source in ('ai', 'hybrid')
+  `;
+
+  return row?.count ?? 0;
+}
+
 async function listAuthUsers(supabase) {
   const users = [];
 
@@ -244,6 +262,13 @@ async function removeStorageObjects(supabase, bucket, paths) {
 
 async function clearApplicationData(sql, tables) {
   await sql.begin(async (tx) => {
+    if (await tableExists(tx, ["public", "cve_recommended_controls"])) {
+      await tx`
+        delete from public.cve_recommended_controls
+        where source in ('ai', 'hybrid')
+      `;
+    }
+
     for (const [schema, table, column] of profileReferenceColumns) {
       if (
         (await tableExists(tx, [schema, table])) &&
@@ -297,6 +322,7 @@ try {
   const users = await listAuthUsers(supabase);
   const storagePaths = await collectStoragePaths(sql);
   const before = await countRows(sql, tables);
+  const aiCveRecommendedControls = await countAiCveRecommendedControls(sql);
 
   const summary = {
     mode: dryRun ? "dry_run" : "execute",
@@ -308,6 +334,7 @@ try {
       reportStorageObjects: storagePaths.reports.length,
       scanImportStorageObjects: storagePaths.scanImports.length,
       auditLogs: before["public.audit_logs"] ?? 0,
+      aiCveRecommendedControls,
     },
     preserves: preservedData,
     before,

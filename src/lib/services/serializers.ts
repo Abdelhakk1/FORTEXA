@@ -10,6 +10,7 @@ import type {
   Severity,
   VulnerabilityStatus,
 } from "@/lib/types";
+import { gabExposureLabels, normalizeGabExposureType } from "./business-priority";
 
 const severityMap = {
   critical: "CRITICAL",
@@ -209,6 +210,10 @@ export function toUiExposureLevel(
   return (
     exposureLevelMap[value as keyof typeof exposureLevelMap] ?? "Internal"
   );
+}
+
+export function toUiGabExposureType(value: string | null | undefined) {
+  return gabExposureLabels[normalizeGabExposureType(value)];
 }
 
 export function toUiReportType(value: string | null | undefined) {

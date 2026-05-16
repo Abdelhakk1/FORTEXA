@@ -12,8 +12,8 @@ import {
   CheckCircle2,
   Clock,
   Database,
+  Landmark,
   Monitor,
-  Server,
   Upload,
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
@@ -95,18 +95,22 @@ export function DashboardSummarySection({
       <div className="mb-6 grid grid-cols-2 gap-5 md:grid-cols-3 lg:grid-cols-6">
         <KpiCard
           hero
-          label="Total Assets"
-          value={data.totals.totalAssets}
+          label="Monitored GABs"
+          value={data.totals.atmGabCount}
           change="+0 vs last month"
           changeType="neutral"
-          icon={<Server className="h-5 w-5" />}
+          icon={<Monitor className="h-5 w-5" />}
         />
         <KpiCard
-          label="ATM / GAB"
-          value={data.totals.atmGabCount}
-          change="Live inventory"
-          changeType="positive"
-          icon={<Monitor className="h-5 w-5" />}
+          label="Need Classification"
+          value={data.totals.unclassifiedGabCount}
+          change={
+            data.totals.unclassifiedGabCount > 0
+              ? "Set exposure context"
+              : "Exposure complete"
+          }
+          changeType={data.totals.unclassifiedGabCount > 0 ? "negative" : "positive"}
+          icon={<Landmark className="h-5 w-5" />}
         />
         <KpiCard
           label="Vulnerabilities"
@@ -182,8 +186,8 @@ export function DashboardSummarySection({
                 </Button>
                 <Button asChild size="sm" variant="outline">
                   <Link href="/assets" prefetch={false}>
-                    <Server className="mr-2 h-4 w-4" />
-                    Import CSV assets
+                    <Monitor className="mr-2 h-4 w-4" />
+                    Import CSV GABs
                   </Link>
                 </Button>
               </div>
@@ -204,8 +208,8 @@ export function DashboardRiskSection({ data }: { data: DashboardRiskData }) {
     <>
       <div className="mb-6 grid grid-cols-1 gap-5 lg:grid-cols-2">
         <SectionCard
-          title="Top Risky ATM / GAB"
-          description="Highest exposure scores in the fleet"
+          title="Top Risky GABs"
+          description="Highest business-priority scores in the fleet"
           action={
             <Link
               href="/assets"
@@ -270,7 +274,7 @@ export function DashboardRiskSection({ data }: { data: DashboardRiskData }) {
                         {asset.name}
                       </p>
                       <p className="text-xs text-[#9CA3AF] dark:text-[#64748B]">
-                        {asset.model} · {asset.branch}
+                        {asset.gabExposureType} · CIDT {asset.cidt.sensitivity}
                       </p>
                     </div>
                   </div>
@@ -310,6 +314,11 @@ export function DashboardRiskSection({ data }: { data: DashboardRiskData }) {
                     <p className="mt-1 text-xs text-[#9CA3AF] dark:text-[#64748B]">
                       {vulnerability.affectedAssetsCount} affected assets
                     </p>
+                    {vulnerability.contextReason ? (
+                      <p className="mt-1 line-clamp-1 text-xs text-[#9CA3AF] dark:text-[#64748B]">
+                        {vulnerability.contextReason}
+                      </p>
+                    ) : null}
                   </div>
                   <div className="flex shrink-0 flex-col items-end gap-2">
                     <SeverityBadge severity={vulnerability.severity} />

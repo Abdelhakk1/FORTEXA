@@ -32,6 +32,7 @@ const {
   assetVulnerabilityEnrichments,
   assetVulnerabilityEvents,
   assetVulnerabilities,
+  businessApplications,
   organizations,
   organizationSettings,
   reportDefinitions,
@@ -101,20 +102,67 @@ try {
     throw new Error(`Nessus import smoke failed: ${result.errors.join("; ")}`);
   }
 
-  const [assetRows, findingRows, avRows] = await Promise.all([
-    db.select({ id: assets.id }).from(assets).where(eq(assets.organizationId, organizationId)),
+  const [assetRows, findingRows, avRows, appRows, enrichmentRows] = await Promise.all([
+    db
+      .select({
+        id: assets.id,
+        type: assets.type,
+        gabExposureType: assets.gabExposureType,
+        cidtConfidentiality: assets.cidtConfidentiality,
+        businessApplicationId: assets.businessApplicationId,
+      })
+      .from(assets)
+      .where(eq(assets.organizationId, organizationId)),
     db
       .select({ id: scanFindings.id })
       .from(scanFindings)
       .where(eq(scanFindings.organizationId, organizationId)),
     db
-      .select({ id: assetVulnerabilities.id })
+      .select({
+        id: assetVulnerabilities.id,
+        riskScore: assetVulnerabilities.riskScore,
+        businessPriority: assetVulnerabilities.businessPriority,
+        priorityFactors: assetVulnerabilities.priorityFactors,
+      })
       .from(assetVulnerabilities)
       .where(eq(assetVulnerabilities.organizationId, organizationId)),
+    db
+      .select({
+        id: businessApplications.id,
+        key: businessApplications.key,
+        label: businessApplications.label,
+      })
+      .from(businessApplications)
+      .where(eq(businessApplications.organizationId, organizationId)),
+    db
+      .select({ id: assetVulnerabilityEnrichments.id })
+      .from(assetVulnerabilityEnrichments)
+      .where(eq(assetVulnerabilityEnrichments.organizationId, organizationId)),
   ]);
 
   if (assetRows.length === 0 || findingRows.length === 0 || avRows.length === 0) {
     throw new Error("Smoke import did not create org-scoped assets, findings, and asset vulnerabilities.");
+  }
+  if (!assetRows.every((asset) => asset.type === "atm" || asset.type === "gab")) {
+    throw new Error("Smoke import created an asset outside the GAB scope.");
+  }
+  if (!assetRows.every((asset) => asset.gabExposureType === "unknown")) {
+    throw new Error("Smoke import should default unknown GAB exposure for scanner-only assets.");
+  }
+  if (!assetRows.every((asset) => asset.cidtConfidentiality === null)) {
+    throw new Error("Smoke import should leave missing GAB CIDT incomplete and editable.");
+  }
+  if (!appRows.some((row) => row.key === "monetique" && row.label === "ATM Payment Services")) {
+    throw new Error("Smoke import did not ensure the ATM Payment Services context.");
+  }
+  if (!assetRows.every((asset) => asset.businessApplicationId)) {
+    throw new Error("Smoke import did not link imported GABs to ATM Payment Services.");
+  }
+  if (!avRows.every((av) => av.riskScore > 0 && av.priorityFactors)) {
+    throw new Error("Smoke import did not calculate business-aware priority factors.");
+  }
+  if (enrichmentRows.length > 0) {
+    throw new Error("AI disabled should not create AI enrichment rows during import.");
   }
 
   console.log(
@@ -130,6 +178,8 @@ try {
         orgScopedAssets: assetRows.length,
         orgScopedFindings: findingRows.length,
         orgScopedAssetVulnerabilities: avRows.length,
+        atmPaymentServicesContexts: appRows.length,
+        businessPriorityFactors: avRows.filter((av) => av.priorityFactors).length,
         warnings: result.warnings.length,
         errors: result.errors.length,
       },
@@ -186,6 +236,9 @@ try {
       .delete(reportDefinitions)
       .where(eq(reportDefinitions.organizationId, organizationId));
     await db.delete(assets).where(eq(assets.organizationId, organizationId));
+    await db
+      .delete(businessApplications)
+      .where(eq(businessApplications.organizationId, organizationId));
     await db
       .delete(organizationSettings)
       .where(eq(organizationSettings.organizationId, organizationId));

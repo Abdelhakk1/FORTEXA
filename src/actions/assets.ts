@@ -5,7 +5,17 @@ import { logAuditEvent } from "@/lib/audit";
 import { requireActiveOrganization, requirePermission } from "@/lib/auth";
 import { err, ok, toActionResult, type ActionResult } from "@/lib/errors";
 import { measureServerTiming } from "@/lib/observability/timing";
-import { createAsset, createAssetSchema } from "@/lib/services/assets";
+import {
+  createAsset,
+  createAssetSchema,
+  updateAssetBusinessContext,
+  updateAssetBusinessContextSchema,
+} from "@/lib/services/assets";
+import {
+  bulkAssetClassificationSchema,
+  bulkUpdateAssetClassification,
+} from "@/lib/services/gab-business-context";
+import { recalculateBusinessPrioritiesForOrganization } from "@/lib/services/business-applications";
 import {
   ensureDefaultReportDefinitions,
   importAssetsFromCsv,
@@ -49,6 +59,102 @@ export async function createAssetAction(
         revalidatePath("/reports");
 
         return ok({ id: row.id });
+      } catch (error) {
+        return toActionResult(error);
+      }
+    },
+    undefined,
+    (result) => ({
+      ok: result.ok,
+      code: result.ok ? "ok" : result.code,
+    })
+  );
+}
+
+export async function updateAssetBusinessContextAction(
+  input: Parameters<typeof updateAssetBusinessContext>[1]
+): Promise<ActionResult<{ id: string }>> {
+  return measureServerTiming(
+    "action.assets.updateBusinessContext",
+    async () => {
+      try {
+        const identity = await requirePermission("assets.write");
+        const activeOrganization = await requireActiveOrganization();
+        const parsed = updateAssetBusinessContextSchema.parse(input);
+        const row = await updateAssetBusinessContext(
+          activeOrganization.organization.id,
+          parsed
+        );
+
+        await logAuditEvent({
+          organizationId: activeOrganization.organization.id,
+          userId: identity.profile?.id ?? null,
+          action: "asset.business_context_updated",
+          resourceType: "asset",
+          resourceId: row.id,
+          details: {
+            assetCode: row.assetCode,
+            gabExposureType: row.gabExposureType,
+          },
+        });
+
+        revalidatePath("/assets");
+        revalidatePath(`/assets/${row.assetCode}`);
+        revalidatePath("/vulnerabilities");
+        revalidatePath("/dashboard");
+        revalidatePath("/reports");
+
+        return ok({ id: row.id });
+      } catch (error) {
+        return toActionResult(error);
+      }
+    },
+    undefined,
+    (result) => ({
+      ok: result.ok,
+      code: result.ok ? "ok" : result.code,
+    })
+  );
+}
+
+export async function bulkUpdateAssetClassificationAction(
+  input: Parameters<typeof bulkUpdateAssetClassification>[1]
+): Promise<ActionResult<{ updated: number }>> {
+  return measureServerTiming(
+    "action.assets.bulkClassification",
+    async () => {
+      try {
+        const identity = await requirePermission("assets.write");
+        const activeOrganization = await requireActiveOrganization();
+        const parsed = bulkAssetClassificationSchema.parse(input);
+        const updated = await bulkUpdateAssetClassification(
+          activeOrganization.organization.id,
+          parsed
+        );
+
+        await recalculateBusinessPrioritiesForOrganization(
+          activeOrganization.organization.id
+        );
+
+        await logAuditEvent({
+          organizationId: activeOrganization.organization.id,
+          userId: identity.profile?.id ?? null,
+          action: "asset.bulk_classification_updated",
+          resourceType: "asset",
+          resourceId: "bulk",
+          details: {
+            updated,
+            operation: parsed.operation,
+            gabExposureType: parsed.gabExposureType,
+          },
+        });
+
+        revalidatePath("/assets");
+        revalidatePath("/vulnerabilities");
+        revalidatePath("/dashboard");
+        revalidatePath("/reports");
+
+        return ok({ updated });
       } catch (error) {
         return toActionResult(error);
       }

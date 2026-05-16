@@ -76,7 +76,7 @@ export function ScanImportPageClient({ data }: ScanImportPageClientProps) {
         <KpiCard label="Total Imports" value={data.summary.totalImports} change="Live history" changeType="neutral" icon={<Upload className="h-5 w-5" />} />
         <KpiCard label="Findings Processed" value={data.summary.totalFindings.toLocaleString()} change="Current backend total" changeType={data.summary.totalFindings > 0 ? "negative" : "neutral"} icon={<Bug className="h-5 w-5" />} />
         <KpiCard label="Assets Mapped" value={data.summary.totalAssetsMapped} change="From completed imports" changeType="neutral" icon={<Server className="h-5 w-5" />} />
-        <KpiCard label="Avg. Processing" value={data.summary.averageProcessingTime} subtitle="Queued via Inngest scaffold" icon={<Clock className="h-5 w-5" />} />
+        <KpiCard label="Avg. Processing" value={data.summary.averageProcessingTime} subtitle="Synchronous MVP import" icon={<Clock className="h-5 w-5" />} />
       </div>
 
       <Card className="p-6 mb-6 border border-[#E9ECEF] dark:border-[#27272a] bg-white dark:bg-[#141419]">

@@ -86,7 +86,7 @@ export default async function DashboardPage() {
     <div>
       <PageHeader
         title="Security Dashboard"
-        description="Live operational overview of your ATM/GAB vulnerability posture"
+        description="Live operational overview of your GAB vulnerability posture"
         actions={
           <div className="flex flex-wrap gap-2">
             <Button

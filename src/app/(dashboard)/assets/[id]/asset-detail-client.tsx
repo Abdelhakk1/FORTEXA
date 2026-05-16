@@ -1,6 +1,8 @@
 "use client";
 
+import { useState, useTransition } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
@@ -8,12 +10,31 @@ import { PageHeader } from "@/components/shared/page-header";
 import { SeverityBadge, PriorityBadge, StatusBadge, SlaBadge } from "@/components/shared/badges";
 import { EChart } from "@/components/shared/echart";
 import type { AssetDetailData } from "@/lib/services/assets";
+import { updateAssetBusinessContextAction } from "@/actions/assets";
 import {
   MapPin, Server, Shield, Wifi, User, Monitor, Wrench, Eye, ArrowRight,
 } from "lucide-react";
 import { useTheme } from "@/components/theme-provider";
 
+const gabExposureOptions = [
+  { value: "unknown", label: "Unknown" },
+  { value: "indoor_agency", label: "Indoor agency GAB" },
+  { value: "outdoor_agency", label: "Outdoor agency GAB" },
+  { value: "outdoor_commercial_center", label: "Outdoor commercial-center GAB" },
+  { value: "outdoor_public_street", label: "Outdoor public/street GAB" },
+] as const;
+
+type GabExposureFormValue = (typeof gabExposureOptions)[number]["value"];
+
+const cidtFields = [
+  ["cidtConfidentiality", "C"],
+  ["cidtIntegrity", "I"],
+  ["cidtAvailability", "D"],
+  ["cidtTraceability", "T"],
+] as const;
+
 export default function AssetDetailClient({ data }: { data: AssetDetailData }) {
+  const router = useRouter();
   const { theme } = useTheme();
   const isDark = theme === "dark";
 
@@ -23,6 +44,29 @@ export default function AssetDetailClient({ data }: { data: AssetDetailData }) {
   const textLight = isDark ? "#94A3B8" : "#6B7280";
 
   const asset = data.asset;
+  const [showContextForm, setShowContextForm] = useState(false);
+  const [showAdvancedOverride, setShowAdvancedOverride] = useState(false);
+  const [contextMessage, setContextMessage] = useState<string | null>(null);
+  const [isSavingContext, startSavingContext] = useTransition();
+  const [contextForm, setContextForm] = useState<{
+    gabExposureType: GabExposureFormValue;
+    cidtOverrideEnabled: boolean;
+    cidtConfidentiality: string;
+    cidtIntegrity: string;
+    cidtAvailability: string;
+    cidtTraceability: string;
+  }>({
+    gabExposureType: gabExposureOptions.some(
+      (option) => option.value === asset.gabExposureTypeDb
+    )
+      ? (asset.gabExposureTypeDb as GabExposureFormValue)
+      : "unknown",
+    cidtOverrideEnabled: Boolean(asset.cidt.isCustomOverride),
+    cidtConfidentiality: asset.cidt.confidentiality?.toString() ?? "missing",
+    cidtIntegrity: asset.cidt.integrity?.toString() ?? "missing",
+    cidtAvailability: asset.cidt.availability?.toString() ?? "missing",
+    cidtTraceability: asset.cidt.traceability?.toString() ?? "missing",
+  });
   const assetVulns = data.vulnerabilities.slice(0, 5);
   const assetRemediation = data.remediationTasks.slice(0, 3);
   const assetScans = data.scanHistory.slice(0, 3);
@@ -41,6 +85,34 @@ export default function AssetDetailClient({ data }: { data: AssetDetailData }) {
     }],
   };
 
+  function cidtFormValue(value: string) {
+    return value === "missing" ? null : Number(value);
+  }
+
+  function saveBusinessContext() {
+    startSavingContext(async () => {
+      setContextMessage(null);
+      const result = await updateAssetBusinessContextAction({
+        assetCode: asset.id,
+        gabExposureType: contextForm.gabExposureType,
+        cidtOverrideEnabled: contextForm.cidtOverrideEnabled,
+        cidtConfidentiality: cidtFormValue(contextForm.cidtConfidentiality),
+        cidtIntegrity: cidtFormValue(contextForm.cidtIntegrity),
+        cidtAvailability: cidtFormValue(contextForm.cidtAvailability),
+        cidtTraceability: cidtFormValue(contextForm.cidtTraceability),
+      });
+
+      if (!result.ok) {
+        setContextMessage(result.message);
+        return;
+      }
+
+      setContextMessage("Business context saved.");
+      setShowContextForm(false);
+      router.refresh();
+    });
+  }
+
   return (
     <div>
       <PageHeader
@@ -48,7 +120,7 @@ export default function AssetDetailClient({ data }: { data: AssetDetailData }) {
         breadcrumbs={[{ label: "Assets", href: "/assets" }, { label: asset.id }]}
         actions={
           <div className="flex gap-2">
-            <Button variant="outline" className="cursor-pointer border-[#E9ECEF] dark:border-[#27272a] bg-[#F9FAFB] dark:bg-[#1a1a22] text-[#6B7280] dark:text-[#94A3B8] hover:bg-[#F0FDF4] dark:hover:bg-[#1a1a22]">Edit Context</Button>
+            <Button type="button" variant="outline" onClick={() => setShowContextForm((current) => !current)} className="cursor-pointer border-[#E9ECEF] dark:border-[#27272a] bg-[#F9FAFB] dark:bg-[#1a1a22] text-[#6B7280] dark:text-[#94A3B8] hover:bg-[#F0FDF4] dark:hover:bg-[#1a1a22]">Edit Context</Button>
             <Button className="gradient-accent text-[#1A1A2E] dark:text-[#fafafa] cursor-pointer">
               <Wrench className="h-4 w-4 mr-2" /> Create Remediation
             </Button>
@@ -106,7 +178,8 @@ export default function AssetDetailClient({ data }: { data: AssetDetailData }) {
                 { icon: Wifi, label: "IP Address", value: asset.ipAddress },
                 { icon: Monitor, label: "OS Version", value: asset.osVersion },
                 { icon: Shield, label: "Criticality", value: asset.criticality },
-                { icon: Wifi, label: "Exposure", value: asset.exposureLevel },
+                { icon: MapPin, label: "GAB Exposure", value: asset.gabExposureType },
+                { icon: Shield, label: "GAB Sensitivity", value: asset.cidt.sensitivity },
                 { icon: User, label: "Owner", value: asset.owner },
               ].map((item) => (
                 <div key={item.label} className="flex items-start gap-3">
@@ -218,25 +291,126 @@ export default function AssetDetailClient({ data }: { data: AssetDetailData }) {
           <Card className="p-5 border border-[#E9ECEF] bg-white dark:border-[#27272a] dark:bg-[#0f0f13]">
             <h3 className="text-sm font-semibold text-[#1A1A2E] dark:text-[#fafafa] mb-4">Business Context</h3>
             <div className="space-y-3">
-              <div className="flex justify-between items-center">
-                <p className="text-xs text-[#6B7280] dark:text-[#94A3B8]">Transaction Volume</p>
-                <p className="text-sm font-medium text-[#1A1A2E] dark:text-[#fafafa]">~1,200/day</p>
-              </div>
-              <Separator className="bg-[#F3F4F6] dark:bg-[#27272a]" />
-              <div className="flex justify-between items-center">
-                <p className="text-xs text-[#6B7280] dark:text-[#94A3B8]">Revenue Impact</p>
-                <p className="text-sm font-medium text-red-600">High</p>
-              </div>
-              <Separator className="bg-[#F3F4F6] dark:bg-[#27272a]" />
-              <div className="flex justify-between items-center">
-                <p className="text-xs text-[#6B7280] dark:text-[#94A3B8]">Customer Facing</p>
-                <p className="text-sm font-medium text-[#1A1A2E] dark:text-[#fafafa]">Yes</p>
-              </div>
-              <Separator className="bg-[#F3F4F6] dark:bg-[#27272a]" />
-              <div className="flex justify-between items-center">
-                <p className="text-xs text-[#6B7280] dark:text-[#94A3B8]">Compliance Scope</p>
-                <p className="text-sm font-medium text-[#1A1A2E] dark:text-[#fafafa]">PCI DSS 4.0</p>
-              </div>
+              <p className="rounded-lg border border-[#E9ECEF] bg-[#F9FAFB] px-3 py-2 text-xs leading-5 text-[#4B5563] dark:border-[#27272a] dark:bg-[#1a1a22] dark:text-[#CBD5E1]">
+                This GAB supports ATM Payment Services.
+              </p>
+              {asset.cidt.isCustomOverride ? (
+                <span className="inline-flex rounded-full border border-[#BFDBFE] bg-[#EFF6FF] px-2.5 py-1 text-xs font-semibold text-[#1E3A8A] dark:border-[#1d4ed8]/60 dark:bg-[#0A1A2D] dark:text-[#BFDBFE]">
+                  Custom CIDT
+                </span>
+              ) : null}
+              {[
+                ["GAB Exposure", asset.gabExposureType],
+                ["GAB CIDT", `C${asset.cidt.confidentiality ?? "?"} I${asset.cidt.integrity ?? "?"} D${asset.cidt.availability ?? "?"} T${asset.cidt.traceability ?? "?"}`],
+                ["GAB Sensitivity", asset.cidt.sensitivity],
+                ["CIDT Source", asset.cidt.sourceLabel ?? "Inherited from ATM Payment Services"],
+                ["Application", asset.businessApplication.label],
+                ["ATM Payment Services CIDT", `C${asset.businessApplication.cidt.confidentiality} I${asset.businessApplication.cidt.integrity} D${asset.businessApplication.cidt.availability} T${asset.businessApplication.cidt.traceability}`],
+                ["ATM Payment Services Profile", `${asset.businessApplication.profile} · ${asset.businessApplication.profileExplanation}`],
+              ].map(([label, value]) => (
+                <div key={label}>
+                  <div className="flex justify-between gap-4">
+                    <p className="text-xs text-[#6B7280] dark:text-[#94A3B8]">{label}</p>
+                    <p className="max-w-[65%] text-right text-sm font-medium text-[#1A1A2E] dark:text-[#fafafa]">{value}</p>
+                  </div>
+                  <Separator className="mt-3 bg-[#F3F4F6] dark:bg-[#27272a]" />
+                </div>
+              ))}
+              {contextMessage ? (
+                <p className="text-xs text-[#0C5CAB] dark:text-[#60A5FA]">{contextMessage}</p>
+              ) : null}
+              {showContextForm ? (
+                <div className="space-y-3 rounded-lg border border-[#E9ECEF] bg-[#F9FAFB] p-3 dark:border-[#27272a] dark:bg-[#1a1a22]">
+                  <label className="grid gap-1 text-xs font-medium text-[#6B7280] dark:text-[#94A3B8]">
+                    GAB exposure
+                    <select
+                      value={contextForm.gabExposureType}
+                      onChange={(event) =>
+                        setContextForm((current) => ({
+                          ...current,
+                          gabExposureType: event.target.value as GabExposureFormValue,
+                        }))
+                      }
+                      className="h-9 rounded-md border border-[#E9ECEF] bg-white px-2 text-sm text-[#1A1A2E] dark:border-[#27272a] dark:bg-[#141419] dark:text-[#fafafa]"
+                    >
+                      {gabExposureOptions.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <p className="rounded-md border border-[#BFDBFE] bg-[#EFF6FF] px-3 py-2 text-xs leading-5 text-[#1E3A8A] dark:border-[#1d4ed8]/60 dark:bg-[#0A1A2D] dark:text-[#BFDBFE]">
+                    Resolved CIDT is currently C{asset.cidt.confidentiality} I
+                    {asset.cidt.integrity} D{asset.cidt.availability} T
+                    {asset.cidt.traceability} from{" "}
+                    {asset.cidt.sourceLabel ?? "ATM Payment Services"}.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setShowAdvancedOverride((current) => !current)}
+                    className="text-xs font-semibold text-[#0C5CAB] hover:text-[#0a4a8a] dark:text-[#60A5FA] dark:hover:text-[#93C5FD]"
+                  >
+                    Advanced: custom GAB CIDT override
+                  </button>
+                  {showAdvancedOverride ? (
+                    <div className="space-y-3 rounded-lg border border-[#E9ECEF] bg-white p-3 dark:border-[#27272a] dark:bg-[#141419]">
+                      <p className="text-xs leading-5 text-[#6B7280] dark:text-[#94A3B8]">
+                        This GAB inherits CIDT from its exposure template. Set a custom
+                        override only if this specific GAB differs from the rest of the
+                        fleet.
+                      </p>
+                      <label className="flex items-center justify-between gap-3 text-xs font-medium text-[#6B7280] dark:text-[#94A3B8]">
+                        Enable custom CIDT override
+                        <input
+                          type="checkbox"
+                          checked={contextForm.cidtOverrideEnabled}
+                          onChange={(event) =>
+                            setContextForm((current) => ({
+                              ...current,
+                              cidtOverrideEnabled: event.target.checked,
+                            }))
+                          }
+                          className="h-4 w-4 rounded border-[#D1D5DB]"
+                        />
+                      </label>
+                      {contextForm.cidtOverrideEnabled ? (
+                        <div className="grid grid-cols-4 gap-2">
+                          {cidtFields.map(([key, label]) => (
+                            <label key={key} className="grid gap-1 text-xs font-medium text-[#6B7280] dark:text-[#94A3B8]">
+                              {label}
+                              <select
+                                value={contextForm[key]}
+                                onChange={(event) =>
+                                  setContextForm((current) => ({
+                                    ...current,
+                                    [key]: event.target.value,
+                                  }))
+                                }
+                                className="h-9 rounded-md border border-[#E9ECEF] bg-white px-2 text-sm text-[#1A1A2E] dark:border-[#27272a] dark:bg-[#141419] dark:text-[#fafafa]"
+                              >
+                                {[1, 2, 3, 4].map((value) => (
+                                  <option key={value} value={String(value)}>
+                                    {value}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
+                  <Button
+                    type="button"
+                    onClick={saveBusinessContext}
+                    disabled={isSavingContext}
+                    className="w-full gradient-accent text-[#1A1A2E] dark:text-[#fafafa]"
+                  >
+                    {isSavingContext ? "Saving..." : "Save context"}
+                  </Button>
+                </div>
+              ) : null}
             </div>
           </Card>
         </div>

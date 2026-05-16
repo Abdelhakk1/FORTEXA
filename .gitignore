@@ -36,6 +36,7 @@ yarn-error.log*
 
 # vercel
 .vercel
+supabase/.temp/
 
 # graphify generated cache
 graphify-out/cache/
@@ -45,3 +46,4 @@ graphify-out/manifest.json
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+.gstack/

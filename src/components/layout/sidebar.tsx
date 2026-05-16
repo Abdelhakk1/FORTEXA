@@ -3,7 +3,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   type LucideIcon,
-  LayoutDashboard, Server, Upload, Bug, Wrench, Bell, FileBarChart, Settings, ChevronRight, Zap,
+  LayoutDashboard, Server, Upload, Bug, Wrench, Bell, FileBarChart, Settings, Zap,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -140,7 +140,7 @@ function SidebarContent({
 
       {/* User Profile */}
       <div className="border-t border-[#E9ECEF] dark:border-[#27272a] px-3 py-3 shrink-0">
-        <div className="flex items-center gap-3 px-2 py-1.5 rounded-lg hover:bg-[#F9FAFB] dark:hover:bg-[#1a1a22] transition-colors cursor-pointer">
+        <div className="flex items-center gap-3 px-2 py-1.5 rounded-lg">
           <Avatar className="h-8 w-8">
             <AvatarFallback className="bg-[#DBEAFE] dark:bg-[#0C5CAB]/30 text-[#0C5CAB] dark:text-[#60A5FA] text-xs font-semibold">
               {userInitials}
@@ -150,7 +150,6 @@ function SidebarContent({
             <p className="text-sm font-medium truncate text-[#1A1A2E] dark:text-[#fafafa]">{userName}</p>
             <p className="text-xs text-[#9CA3AF] dark:text-[#64748B] truncate">{userRoleLabel}</p>
           </div>
-          <ChevronRight className="h-4 w-4 text-[#D1D5DB] dark:text-[#64748B] shrink-0" />
         </div>
       </div>
       {mobile && <div className="h-3 shrink-0" />}

@@ -19,7 +19,7 @@ const ibmPlexMono = IBM_Plex_Mono({
 
 export const metadata: Metadata = {
   title: "Fortexa — ATM Vulnerability Management",
-  description: "Enterprise-grade proactive vulnerability management platform for ATM/GAB environments in the banking sector.",
+  description: "Enterprise-grade proactive vulnerability management platform for GAB environments in the banking sector.",
 };
 
 export default function RootLayout({

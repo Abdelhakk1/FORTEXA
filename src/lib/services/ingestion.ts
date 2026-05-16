@@ -20,8 +20,25 @@ import {
 } from "@/db/schema";
 import { AppError } from "@/lib/errors";
 import { inferAssetContext } from "@/lib/services/asset-inference";
+import {
+  calculateBusinessPriority,
+  gabExposureLabels,
+  hasCompleteCidt,
+  normalizeGabExposureType,
+  resolveGabCidtContext,
+} from "@/lib/services/business-priority";
+import {
+  ensureAtmPaymentServicesApplication,
+  recalculateBusinessPrioritiesForOrganization,
+} from "@/lib/services/business-applications";
+import {
+  classifyAssetByRules,
+  ensureGabCidtTemplates,
+  listAssetClassificationRules,
+} from "@/lib/services/gab-business-context";
 import { queueAssetVulnerabilityEnrichment } from "@/lib/services/asset-vulnerability-enrichment";
 import { queueCveEnrichment } from "@/lib/services/cve-enrichment";
+import { fortexaEventNames, sendFortexaEvent } from "@/lib/services/inngest";
 import { getFortexaStorageBuckets } from "@/lib/services/storage";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
@@ -33,6 +50,7 @@ type Severity = typeof cves.$inferSelect.severity;
 type ExploitMaturity = typeof cves.$inferSelect.exploitMaturity;
 type BusinessPriority = typeof assetVulnerabilities.$inferSelect.businessPriority;
 type MatchMethod = typeof scanFindings.$inferSelect.matchMethod;
+type GabExposure = typeof assets.$inferSelect.gabExposureType;
 
 interface ObservedAsset {
   preferredAssetCode?: string | null;
@@ -51,6 +69,13 @@ interface ObservedAsset {
   osVersion: string | null;
   criticality: AssetCriticality;
   exposureLevel: ExposureLevel;
+  gabExposureType: GabExposure;
+  cidtOverrideEnabled: boolean;
+  cidtConfidentiality: number | null;
+  cidtIntegrity: number | null;
+  cidtAvailability: number | null;
+  cidtTraceability: number | null;
+  businessApplicationId: string | null;
   status: typeof assets.$inferSelect.status;
   metadata: Record<string, unknown>;
 }
@@ -122,9 +147,6 @@ interface NormalizedImportError {
 const workspaceSchemaNotReadyMessage =
   "Import failed because the workspace data schema is not ready. Please run migrations and try again.";
 
-const privateIpPattern =
-  /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[0-1])\.|127\.|169\.254\.)/;
-
 const xmlParser = new XMLParser({
   ignoreAttributes: false,
   attributeNamePrefix: "",
@@ -139,6 +161,13 @@ const xmlParser = new XMLParser({
 });
 
 function validateNessusXml(xml: string) {
+  if (/<!doctype/i.test(xml) || /<!entity/i.test(xml)) {
+    throw new AppError(
+      "validation_error",
+      "The Nessus XML could not be parsed: document type declarations and entity expansion are not allowed."
+    );
+  }
+
   const validation = XMLValidator.validate(xml);
 
   if (validation !== true) {
@@ -167,7 +196,7 @@ const assetTypePrefixes: Record<AssetType, string> = {
 const defaultReportDefinitions = [
   {
     name: "Executive Exposure Summary",
-    description: "ATM/GAB exposure summary from real Fortexa data.",
+    description: "GAB exposure summary from real Fortexa data.",
     type: "executive" as const,
     schedule: "On demand",
     status: "active" as const,
@@ -304,6 +333,11 @@ function toInteger(value: unknown) {
   return Number.isNaN(parsed) ? null : parsed;
 }
 
+function toCidtValue(value: unknown) {
+  const parsed = toInteger(value);
+  return parsed != null && parsed >= 1 && parsed <= 4 ? parsed : null;
+}
+
 function toNumber(value: unknown) {
   const text = asText(value);
 
@@ -319,10 +353,6 @@ function isIpAddress(value: string | null | undefined) {
   return Boolean(value && /^(\d{1,3}\.){3}\d{1,3}$/.test(value));
 }
 
-function isPrivateIp(value: string | null | undefined) {
-  return Boolean(value && privateIpPattern.test(value));
-}
-
 function metadataValue(
   metadata: Record<string, unknown> | null | undefined,
   key: string
@@ -336,28 +366,8 @@ function guessAssetType(name: string, tags: Record<string, string>) {
 
   if (haystack.includes("atm")) return "atm";
   if (haystack.includes("gab")) return "gab";
-  if (haystack.includes("kiosk")) return "kiosk";
-  if (
-    haystack.includes("router") ||
-    haystack.includes("switch") ||
-    haystack.includes("firewall") ||
-    haystack.includes("cisco") ||
-    haystack.includes("juniper")
-  ) {
-    return "network_device";
-  }
-  if (
-    haystack.includes("windows") ||
-    haystack.includes("linux") ||
-    haystack.includes("server")
-  ) {
-    return "server";
-  }
-  if (haystack.includes("workstation") || haystack.includes("desktop")) {
-    return "workstation";
-  }
 
-  return "other";
+  return "gab";
 }
 
 function guessCriticality(type: AssetType): AssetCriticality {
@@ -365,14 +375,8 @@ function guessCriticality(type: AssetType): AssetCriticality {
     case "atm":
     case "gab":
       return "critical";
-    case "server":
-    case "network_device":
-      return "high";
-    case "workstation":
-    case "kiosk":
-      return "medium";
     default:
-      return "low";
+      return "critical";
   }
 }
 
@@ -381,14 +385,7 @@ function guessExposureLevel(input: {
   domain: string | null;
   url: string | null;
 }): ExposureLevel {
-  if (input.ipAddress && !isPrivateIp(input.ipAddress)) {
-    return "internet_facing";
-  }
-
-  if (input.url || input.domain) {
-    return "internet_facing";
-  }
-
+  void input;
   return "internal";
 }
 
@@ -439,65 +436,6 @@ function exploitMaturityFromFinding(finding: {
   }
 
   return "theoretical" as const;
-}
-
-function riskWeight(value: number, weight: number) {
-  return value * (weight / 100);
-}
-
-function calculateRiskScore(input: {
-  severity: Severity;
-  exploitMaturity: ExploitMaturity;
-  criticality: AssetCriticality;
-  exposureLevel: ExposureLevel;
-  policy: typeof scoringPolicies.$inferSelect | null;
-}) {
-  const severityScore = {
-    critical: 100,
-    high: 82,
-    medium: 58,
-    low: 30,
-    info: 10,
-  }[input.severity];
-  const exploitScore = {
-    active_in_wild: 100,
-    poc_available: 75,
-    theoretical: 45,
-    none: 10,
-  }[input.exploitMaturity];
-  const criticalityScore = {
-    critical: 100,
-    high: 78,
-    medium: 55,
-    low: 28,
-  }[input.criticality];
-  const exposureScore = {
-    internet_facing: 100,
-    internal: 60,
-    isolated: 20,
-  }[input.exposureLevel];
-
-  const policy = input.policy ?? {
-    severityWeight: 30,
-    exploitabilityWeight: 25,
-    assetCriticalityWeight: 25,
-    exposureWeight: 20,
-  };
-
-  return Math.round(
-    riskWeight(severityScore, policy.severityWeight) +
-      riskWeight(exploitScore, policy.exploitabilityWeight) +
-      riskWeight(criticalityScore, policy.assetCriticalityWeight) +
-      riskWeight(exposureScore, policy.exposureWeight)
-  );
-}
-
-function businessPriorityFromRisk(riskScore: number): BusinessPriority {
-  if (riskScore >= 90) return "p1";
-  if (riskScore >= 75) return "p2";
-  if (riskScore >= 60) return "p3";
-  if (riskScore >= 40) return "p4";
-  return "p5";
 }
 
 function buildSlaDueDate(severity: Severity) {
@@ -716,6 +654,13 @@ export function parseNessusXml(xml: string): {
           domain,
           url: null,
         }),
+        gabExposureType: "unknown",
+        cidtOverrideEnabled: false,
+        cidtConfidentiality: null,
+        cidtIntegrity: null,
+        cidtAvailability: null,
+        cidtTraceability: null,
+        businessApplicationId: null,
         status: "active",
         metadata: {
           source: "nessus",
@@ -1258,6 +1203,29 @@ async function upsertObservedAsset(params: {
         criticality: matched.asset.criticality ?? params.observedAsset.criticality,
         exposureLevel:
           matched.asset.exposureLevel ?? params.observedAsset.exposureLevel,
+        gabExposureType:
+          matched.asset.gabExposureType === "unknown" &&
+          params.observedAsset.gabExposureType !== "unknown"
+            ? params.observedAsset.gabExposureType
+            : matched.asset.gabExposureType,
+        cidtOverrideEnabled:
+          matched.asset.cidtOverrideEnabled ||
+          params.observedAsset.cidtOverrideEnabled,
+        cidtConfidentiality: params.observedAsset.cidtOverrideEnabled
+          ? params.observedAsset.cidtConfidentiality
+          : matched.asset.cidtConfidentiality,
+        cidtIntegrity: params.observedAsset.cidtOverrideEnabled
+          ? params.observedAsset.cidtIntegrity
+          : matched.asset.cidtIntegrity,
+        cidtAvailability: params.observedAsset.cidtOverrideEnabled
+          ? params.observedAsset.cidtAvailability
+          : matched.asset.cidtAvailability,
+        cidtTraceability: params.observedAsset.cidtOverrideEnabled
+          ? params.observedAsset.cidtTraceability
+          : matched.asset.cidtTraceability,
+        businessApplicationId:
+          matched.asset.businessApplicationId ??
+          params.observedAsset.businessApplicationId,
         ownerId: matched.asset.ownerId ?? params.observedAsset.ownerId,
         status: matched.asset.status,
         lastScanDate: new Date(),
@@ -1302,6 +1270,13 @@ async function upsertObservedAsset(params: {
       osVersion: params.observedAsset.osVersion,
       criticality: params.observedAsset.criticality,
       exposureLevel: params.observedAsset.exposureLevel,
+      gabExposureType: params.observedAsset.gabExposureType,
+      cidtOverrideEnabled: params.observedAsset.cidtOverrideEnabled,
+      cidtConfidentiality: params.observedAsset.cidtConfidentiality,
+      cidtIntegrity: params.observedAsset.cidtIntegrity,
+      cidtAvailability: params.observedAsset.cidtAvailability,
+      cidtTraceability: params.observedAsset.cidtTraceability,
+      businessApplicationId: params.observedAsset.businessApplicationId,
       status: params.observedAsset.status,
       ownerId: params.observedAsset.ownerId,
       lastScanDate: new Date(),
@@ -1359,6 +1334,18 @@ async function createImportFailureAlert(params: {
     relatedScanImportId: params.scanImportId,
     ownerId: params.importedBy,
   });
+
+  await sendFortexaEvent({
+    name: fortexaEventNames.notificationDispatchRequested,
+    data: {
+      organizationId: params.organizationId,
+      kind: "import_failure",
+      subject: "Fortexa scan import failed",
+      text: params.message,
+      recipientProfileId: params.importedBy,
+      scanImportId: params.scanImportId,
+    },
+  });
 }
 
 async function createFindingAlerts(params: {
@@ -1414,10 +1401,13 @@ async function createFindingAlerts(params: {
     });
   }
 
-  if (
-    params.asset.exposureLevel === "internet_facing" &&
-    params.severity === "critical"
-  ) {
+  const gabExposure = normalizeGabExposureType(params.asset.gabExposureType);
+  const isOutdoorGab =
+    gabExposure === "outdoor_agency" ||
+    gabExposure === "outdoor_commercial_center" ||
+    gabExposure === "outdoor_public_street";
+
+  if (isOutdoorGab && params.severity === "critical") {
     const [exposed] = await db
       .select({ id: alerts.id })
       .from(alerts)
@@ -1433,8 +1423,8 @@ async function createFindingAlerts(params: {
     if (!exposed) {
       await db.insert(alerts).values({
         organizationId: params.organizationId,
-        title: `Internet-facing critical asset: ${params.asset.assetCode}`,
-        description: `${params.asset.assetCode} is internet-facing and now has an open critical vulnerability.`,
+        title: `Outdoor critical GAB: ${params.asset.assetCode}`,
+        description: `${params.asset.assetCode} is a ${gabExposureLabels[gabExposure].toLowerCase()} supporting ATM Payment Services and now has an open critical vulnerability.`,
         type: "exposed_asset",
         severity: "critical",
         status: "new",
@@ -1560,7 +1550,15 @@ export async function processScanImport(
       );
     }
 
-    const [existingAssets, existingAssetVulnerabilities, activePolicy, settings] =
+    const [
+      existingAssets,
+      existingAssetVulnerabilities,
+      activePolicy,
+      settings,
+      application,
+      templates,
+      classificationRules,
+    ] =
       await Promise.all([
         db.select().from(assets).where(eq(assets.organizationId, organizationId)),
         db
@@ -1579,6 +1577,9 @@ export async function processScanImport(
           .where(eq(organizationSettings.organizationId, organizationId))
           .limit(1)
           .then((rows) => rows[0] ?? null),
+        ensureAtmPaymentServicesApplication(organizationId),
+        ensureGabCidtTemplates(organizationId),
+        listAssetClassificationRules(organizationId),
       ]);
     const aiEnabled = Boolean(settings?.aiEnabled && settings.aiConsentAccepted);
 
@@ -1606,10 +1607,29 @@ export async function processScanImport(
 
     for (const entry of parsed.assets) {
       try {
+        const classification =
+          entry.asset.gabExposureType === "unknown"
+            ? classifyAssetByRules(entry.asset, classificationRules)
+            : null;
+        const observedAsset = {
+          ...entry.asset,
+          gabExposureType: classification?.gabExposureType ?? entry.asset.gabExposureType,
+          businessApplicationId: entry.asset.businessApplicationId ?? application.id,
+          metadata: classification
+            ? {
+                ...entry.asset.metadata,
+                classification: {
+                  source: "rule",
+                  ruleName: classification.ruleName,
+                  appliedAt: new Date().toISOString(),
+                },
+              }
+            : entry.asset.metadata,
+        };
         const matched = await upsertObservedAsset({
           organizationId,
           existingAssets,
-          observedAsset: entry.asset,
+          observedAsset,
           assetCodeGenerator,
         });
 
@@ -1665,14 +1685,38 @@ export async function processScanImport(
             linkedCves += 1;
             const key = `${matched.asset.id}:${cveRow.id}`;
             seenAssetVulnerabilityKeys.add(key);
-            const riskScore = calculateRiskScore({
-              severity: finding.severity,
-              exploitMaturity: finding.exploitMaturity,
-              criticality: matched.asset.criticality,
-              exposureLevel: matched.asset.exposureLevel,
-              policy: activePolicy,
+            const applicationCidt = {
+              confidentiality: application.cidtConfidentiality,
+              integrity: application.cidtIntegrity,
+              availability: application.cidtAvailability,
+              traceability: application.cidtTraceability,
+            };
+            const resolvedAssetCidt = resolveGabCidtContext({
+              assetCidt: {
+                confidentiality: matched.asset.cidtConfidentiality,
+                integrity: matched.asset.cidtIntegrity,
+                availability: matched.asset.cidtAvailability,
+                traceability: matched.asset.cidtTraceability,
+              },
+              cidtOverrideEnabled: matched.asset.cidtOverrideEnabled,
+              gabExposureType: matched.asset.gabExposureType,
+              templates,
+              applicationCidt,
             });
-            const businessPriority = businessPriorityFromRisk(riskScore);
+            const priority = calculateBusinessPriority({
+              severity: finding.severity,
+              cvssScore: finding.cvssScore,
+              exploitMaturity: finding.exploitMaturity,
+              assetCidt: resolvedAssetCidt.cidt,
+              assetCidtSource: resolvedAssetCidt.source,
+              assetCidtSourceLabel: resolvedAssetCidt.sourceLabel,
+              assetCidtMissingContext: resolvedAssetCidt.missingContext,
+              applicationCidt,
+              applicationInternetExposed: application.isInternetExposed,
+              gabExposureType: matched.asset.gabExposureType,
+            });
+            const riskScore = priority.riskScore;
+            const businessPriority = priority.businessPriority;
             const slaDue = buildSlaDueDate(finding.severity);
             const existing = avMap.get(key);
 
@@ -1688,6 +1732,7 @@ export async function processScanImport(
                   status: nextStatus,
                   riskScore,
                   businessPriority,
+                  priorityFactors: priority.factors as unknown as Record<string, unknown>,
                   slaDue,
                   slaStatus: buildSlaStatus(slaDue),
                   scoringPolicyId: activePolicy?.id ?? existing.scoringPolicyId,
@@ -1766,6 +1811,7 @@ export async function processScanImport(
                 status: "new",
                 businessPriority,
                 riskScore,
+                priorityFactors: priority.factors as unknown as Record<string, unknown>,
                 slaDue,
                 slaStatus: buildSlaStatus(slaDue),
                 scoringPolicyId: activePolicy?.id ?? null,
@@ -1922,7 +1968,7 @@ export async function processScanImport(
         try {
           const queued = await queueAssetVulnerabilityEnrichment(
             assetVulnerabilityId,
-            { organizationId }
+            { organizationId, triggerSource: "automatic_import" }
           );
           if (!queued.ok) {
             warnings.push(
@@ -2058,7 +2104,7 @@ export async function importAssetsFromCsv(params: {
     );
   }
 
-  const [existingAssets, regionRows, ownerRows] = await Promise.all([
+  const [existingAssets, regionRows, ownerRows, application, classificationRules] = await Promise.all([
     db.select().from(assets).where(eq(assets.organizationId, params.organizationId)),
     db.select().from(regions),
     db
@@ -2067,6 +2113,8 @@ export async function importAssetsFromCsv(params: {
         email: profiles.email,
       })
       .from(profiles),
+    ensureAtmPaymentServicesApplication(params.organizationId),
+    listAssetClassificationRules(params.organizationId),
   ]);
 
   const assetCodeGenerator = createAssetCodeGenerator(existingAssets);
@@ -2079,6 +2127,7 @@ export async function importAssetsFromCsv(params: {
 
   let createdAssets = 0;
   let updatedAssets = 0;
+  const touchedAssetIds = new Set<string>();
   const errors: Array<{ rowNumber: number; message: string }> = [];
 
   for (const [index, values] of bodyRows.entries()) {
@@ -2113,14 +2162,12 @@ export async function importAssetsFromCsv(params: {
 
       const typeValue = normalizeEnumValue(record.type);
       const type: AssetType =
-        typeValue === "atm" ||
-        typeValue === "gab" ||
-        typeValue === "kiosk" ||
-        typeValue === "server" ||
-        typeValue === "network_device" ||
-        typeValue === "workstation"
+        typeValue === "atm" || typeValue === "gab"
           ? typeValue
-          : "other";
+          : guessAssetType(
+              `${record.name} ${record.hostname} ${record.asset_code}`,
+              {}
+            );
       const ipAddress = asText(record.ip_address);
       const hostname = asText(record.hostname);
       const domain = asText(record.domain);
@@ -2140,6 +2187,37 @@ export async function importAssetsFromCsv(params: {
         );
       }
 
+      const explicitGabExposure = Boolean(
+        record.gab_exposure_type || record.exposure_context
+      );
+      const csvGabExposure = normalizeGabExposureType(
+        normalizeEnumValue(record.gab_exposure_type || record.exposure_context)
+      );
+      const csvCidt = {
+        cidtConfidentiality: toCidtValue(record.cidt_confidentiality),
+        cidtIntegrity: toCidtValue(record.cidt_integrity),
+        cidtAvailability: toCidtValue(record.cidt_availability),
+        cidtTraceability: toCidtValue(record.cidt_traceability),
+      };
+      const csvHasCustomCidt = hasCompleteCidt({
+        confidentiality: csvCidt.cidtConfidentiality,
+        integrity: csvCidt.cidtIntegrity,
+        availability: csvCidt.cidtAvailability,
+        traceability: csvCidt.cidtTraceability,
+      });
+      const classification = explicitGabExposure
+        ? null
+        : classifyAssetByRules(
+            {
+              preferredAssetCode: asText(record.asset_code),
+              name: assetName,
+              hostname,
+              branch: asText(record.branch),
+              location: asText(record.location),
+            },
+            classificationRules
+          );
+
       const observedAsset: ObservedAsset = {
         preferredAssetCode: asText(record.asset_code),
         name: assetName,
@@ -2158,14 +2236,21 @@ export async function importAssetsFromCsv(params: {
         criticality:
           normalizeEnumValue(record.criticality) === "critical" ||
           normalizeEnumValue(record.criticality) === "high" ||
+          normalizeEnumValue(record.criticality) === "medium" ||
           normalizeEnumValue(record.criticality) === "low"
             ? (normalizeEnumValue(record.criticality) as AssetCriticality)
             : guessCriticality(type),
         exposureLevel:
-          normalizeEnumValue(record.exposure_level) === "internet_facing" ||
           normalizeEnumValue(record.exposure_level) === "isolated"
             ? (normalizeEnumValue(record.exposure_level) as ExposureLevel)
             : guessExposureLevel({ ipAddress, domain, url }),
+        gabExposureType: classification?.gabExposureType ?? csvGabExposure,
+        cidtOverrideEnabled: csvHasCustomCidt,
+        cidtConfidentiality: csvHasCustomCidt ? csvCidt.cidtConfidentiality : null,
+        cidtIntegrity: csvHasCustomCidt ? csvCidt.cidtIntegrity : null,
+        cidtAvailability: csvHasCustomCidt ? csvCidt.cidtAvailability : null,
+        cidtTraceability: csvHasCustomCidt ? csvCidt.cidtTraceability : null,
+        businessApplicationId: application.id,
         status:
           normalizeEnumValue(record.status) === "inactive" ||
           normalizeEnumValue(record.status) === "maintenance" ||
@@ -2178,6 +2263,12 @@ export async function importAssetsFromCsv(params: {
           domain,
           url,
           csvRowNumber: rowNumber,
+          classification: classification
+            ? {
+                source: "rule",
+                ruleName: classification.ruleName,
+              }
+            : null,
         },
       };
 
@@ -2193,6 +2284,7 @@ export async function importAssetsFromCsv(params: {
       } else {
         updatedAssets += 1;
       }
+      touchedAssetIds.add(matched.asset.id);
     } catch (error) {
       errors.push({
         rowNumber,
@@ -2206,6 +2298,11 @@ export async function importAssetsFromCsv(params: {
 
   if (createdAssets + updatedAssets > 0) {
     await ensureDefaultReportDefinitions(params.organizationId, params.importedBy);
+    for (const assetId of touchedAssetIds) {
+      await recalculateBusinessPrioritiesForOrganization(params.organizationId, {
+        assetId,
+      });
+    }
   }
 
   return {

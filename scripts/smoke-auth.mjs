@@ -80,7 +80,7 @@ export async function ensureSmokeUser() {
   const supabase = createSupabaseAdminClient();
   const email =
     process.env.FORTEXA_SMOKE_EMAIL?.trim() ||
-    `fortexa.smoke.${Date.now()}.${randomBytes(4).toString("hex")}@fortexa.local`;
+    `fortexa.smoke.${Date.now()}.${randomBytes(4).toString("hex")}@fortexa-bank.com`;
   const password = `Fortexa!${randomBytes(12).toString("hex")}A1`;
   const existingUser = await findAuthUserByEmail(supabase, email);
   const userResult = await withRetry("prepare smoke user", () =>

@@ -7,6 +7,7 @@ import {
   alerts,
   assetVulnerabilities,
   assets,
+  businessApplications,
   cves,
   profiles,
   regions,
@@ -26,6 +27,7 @@ import {
   toUiBusinessPriority,
   toUiCriticality,
   toUiExposureLevel,
+  toUiGabExposureType,
   toUiRemediationStatus,
   toUiSeverity,
   toUiSlaStatus,
@@ -45,6 +47,21 @@ import {
   type SQL,
 } from "./utils";
 import { inferAssetContext } from "./asset-inference";
+import {
+  ATM_PAYMENT_SERVICES_LABEL,
+  applicationProfileExplanation,
+  calculateApplicationProfile,
+  calculateCidtSensitivity,
+  hasCompleteCidt,
+  resolveGabCidtContext,
+  toSensitivityLevel,
+  type GabCidtTemplate,
+} from "./business-priority";
+import {
+  ensureAtmPaymentServicesApplication,
+  recalculateBusinessPrioritiesForOrganization,
+} from "./business-applications";
+import { ensureGabCidtTemplates, templateDisplayRows } from "./gab-business-context";
 
 const priorityRank = {
   p1: 1,
@@ -62,6 +79,76 @@ const severityRank = {
   info: 1,
 } as const;
 
+const cidtInputSchema = z.preprocess(
+  (value) => (value === "" || value === "missing" ? null : value),
+  z.coerce.number().int().min(1).max(4).nullable()
+).optional();
+
+export function buildAssetBusinessContext(
+  asset: typeof assets.$inferSelect,
+  application: typeof businessApplications.$inferSelect | null,
+  templates: GabCidtTemplate[] = []
+) {
+  const app = application ?? {
+    label: ATM_PAYMENT_SERVICES_LABEL,
+    cidtConfidentiality: 4,
+    cidtIntegrity: 4,
+    cidtAvailability: 4,
+    cidtTraceability: 4,
+    isInternetExposed: false,
+  };
+  const assetCidt = {
+    confidentiality: asset.cidtConfidentiality,
+    integrity: asset.cidtIntegrity,
+    availability: asset.cidtAvailability,
+    traceability: asset.cidtTraceability,
+  };
+  const appCidt = {
+    confidentiality: app.cidtConfidentiality,
+    integrity: app.cidtIntegrity,
+    availability: app.cidtAvailability,
+    traceability: app.cidtTraceability,
+  };
+  const resolvedAssetCidt = resolveGabCidtContext({
+    assetCidt,
+    cidtOverrideEnabled: asset.cidtOverrideEnabled,
+    gabExposureType: asset.gabExposureType,
+    templates,
+    applicationCidt: appCidt,
+  });
+  const appSensitivity = calculateCidtSensitivity(appCidt, 4);
+  const appProfile = calculateApplicationProfile({
+    isInternetExposed: app.isInternetExposed,
+    confidentiality: app.cidtConfidentiality,
+    integrity: app.cidtIntegrity,
+  });
+
+  return {
+    gabExposureType: toUiGabExposureType(asset.gabExposureType),
+    gabExposureTypeDb: asset.gabExposureType,
+    cidt: {
+      ...resolvedAssetCidt.cidt,
+      sensitivity: resolvedAssetCidt.sensitivityLabel,
+      isComplete: resolvedAssetCidt.source !== "system_default",
+      source: resolvedAssetCidt.source,
+      sourceLabel: resolvedAssetCidt.sourceLabel,
+      templateKey: resolvedAssetCidt.templateKey,
+      isCustomOverride: resolvedAssetCidt.isCustomOverride,
+    },
+    businessApplication: {
+      label: ATM_PAYMENT_SERVICES_LABEL as typeof ATM_PAYMENT_SERVICES_LABEL,
+      cidt: {
+        ...appCidt,
+        sensitivity: toSensitivityLevel(appSensitivity),
+        isComplete: true,
+      },
+      profile: `Profile ${appProfile}` as const,
+      profileExplanation: applicationProfileExplanation(appProfile),
+      isInternetExposed: app.isInternetExposed,
+    },
+  };
+}
+
 export interface AssetListFilters {
   search?: string;
   regionId?: string;
@@ -69,6 +156,7 @@ export interface AssetListFilters {
   status?: string;
   criticality?: string;
   exposureLevel?: string;
+  gabExposureType?: string;
   page?: number;
   pageSize?: number;
 }
@@ -82,11 +170,28 @@ export interface AssetListItem extends Asset {
 export interface AssetsPageData {
   assets: ReturnType<typeof buildPaginatedResult<AssetListItem>>;
   regionOptions: Array<{ id: string; name: string; code: string }>;
+  gabCidtTemplates: Array<{
+    templateKey: string;
+    label: string;
+    cidtConfidentiality: number;
+    cidtIntegrity: number;
+    cidtAvailability: number;
+    cidtTraceability: number;
+    sensitivity: string;
+  }>;
+  atmPaymentServicesCidt: {
+    cidtConfidentiality: number;
+    cidtIntegrity: number;
+    cidtAvailability: number;
+    cidtTraceability: number;
+    sensitivity: string;
+  };
   summary: {
     totalAssets: number;
     atmCount: number;
     gabCount: number;
-    internetFacing: number;
+    outdoorGabs: number;
+    unknownGabExposureCount: number;
   };
 }
 
@@ -109,15 +214,7 @@ export interface AssetDetailData {
 export const createAssetSchema = z.object({
   assetCode: z.string().trim().min(2).max(64),
   name: z.string().trim().min(2).max(255),
-  type: z.enum([
-    "atm",
-    "gab",
-    "kiosk",
-    "server",
-    "network_device",
-    "workstation",
-    "other",
-  ]),
+  type: z.enum(["atm", "gab"]).default("gab"),
   model: z.string().trim().max(255).optional().or(z.literal("")),
   manufacturer: z.string().trim().max(255).optional().or(z.literal("")),
   branch: z.string().trim().max(255).optional().or(z.literal("")),
@@ -127,11 +224,61 @@ export const createAssetSchema = z.object({
   osVersion: z.string().trim().max(255).optional().or(z.literal("")),
   criticality: z.enum(["critical", "high", "medium", "low"]).default("medium"),
   exposureLevel: z.enum(["internet_facing", "internal", "isolated"]).default("internal"),
+  gabExposureType: z
+    .enum([
+      "unknown",
+      "indoor_agency",
+      "outdoor_agency",
+      "outdoor_commercial_center",
+      "outdoor_public_street",
+    ])
+    .default("unknown"),
+  cidtConfidentiality: cidtInputSchema,
+  cidtIntegrity: cidtInputSchema,
+  cidtAvailability: cidtInputSchema,
+  cidtTraceability: cidtInputSchema,
   status: z
     .enum(["active", "inactive", "maintenance", "decommissioned"])
     .default("active"),
   ownerId: z.string().uuid().nullable().optional(),
 });
+
+export const updateAssetBusinessContextSchema = z
+  .object({
+    assetCode: z.string().trim().min(2).max(64),
+    cidtOverrideEnabled: z.boolean().default(false),
+    cidtConfidentiality: cidtInputSchema,
+    cidtIntegrity: cidtInputSchema,
+    cidtAvailability: cidtInputSchema,
+    cidtTraceability: cidtInputSchema,
+    gabExposureType: z.enum([
+      "unknown",
+      "indoor_agency",
+      "outdoor_agency",
+      "outdoor_commercial_center",
+      "outdoor_public_street",
+    ]),
+  })
+  .superRefine((value, context) => {
+    if (!value.cidtOverrideEnabled) {
+      return;
+    }
+
+    if (
+      !hasCompleteCidt({
+        confidentiality: value.cidtConfidentiality,
+        integrity: value.cidtIntegrity,
+        availability: value.cidtAvailability,
+        traceability: value.cidtTraceability,
+      })
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["cidtOverrideEnabled"],
+        message: "Custom CIDT override requires all four CIDT values.",
+      });
+    }
+  });
 
 function buildAssetWhere(organizationId: string, filters: AssetListFilters) {
   const clauses: SQL[] = [eq(assets.organizationId, organizationId)];
@@ -178,15 +325,26 @@ function buildAssetWhere(organizationId: string, filters: AssetListFilters) {
     );
   }
 
+  if (filters.gabExposureType && filters.gabExposureType !== "all") {
+    clauses.push(
+      eq(
+        assets.gabExposureType,
+        filters.gabExposureType as typeof assets.$inferSelect.gabExposureType
+      )
+    );
+  }
+
   return clauses.length ? and(...clauses) : undefined;
 }
 
 function mapAssets(
   rows: Array<{
     asset: typeof assets.$inferSelect;
+    application: typeof businessApplications.$inferSelect | null;
     regionName: string | null;
     ownerName: string | null;
   }>,
+  templates: GabCidtTemplate[],
   vulnerabilityRows: Array<{
     assetId: string;
     riskScore: number;
@@ -238,8 +396,9 @@ function mapAssets(
     grouped.set(row.assetId, current);
   }
 
-  return rows.map(({ asset, regionName, ownerName }) => {
+  return rows.map(({ asset, application, regionName, ownerName }) => {
     const stats = grouped.get(asset.id);
+    const businessContext = buildAssetBusinessContext(asset, application, templates);
 
     return {
       dbId: asset.id,
@@ -256,6 +415,7 @@ function mapAssets(
       osVersion: asset.osVersion ?? "—",
       criticality: toUiCriticality(asset.criticality),
       exposureLevel: toUiExposureLevel(asset.exposureLevel),
+      ...businessContext,
       status: toUiAssetStatus(asset.status),
       owner: ownerName ?? "Unassigned",
       ownerId: asset.ownerId ?? null,
@@ -279,11 +439,20 @@ export async function listAssets(
     return {
       assets: buildPaginatedResult([], 0, pagination),
       regionOptions: [],
+      gabCidtTemplates: [],
+      atmPaymentServicesCidt: {
+        cidtConfidentiality: 4,
+        cidtIntegrity: 4,
+        cidtAvailability: 4,
+        cidtTraceability: 4,
+        sensitivity: "S4",
+      },
       summary: {
         totalAssets: 0,
         atmCount: 0,
         gabCount: 0,
-        internetFacing: 0,
+        outdoorGabs: 0,
+        unknownGabExposureCount: 0,
       },
     };
   }
@@ -294,7 +463,14 @@ export async function listAssets(
       async () => {
         const where = buildAssetWhere(organizationId, filters);
 
-        const [regionRows, summaryRows, totalRows, assetRows] = await Promise.all([
+        const [
+          regionRows,
+          summaryRows,
+          totalRows,
+          assetRows,
+          templates,
+          atmPaymentServices,
+        ] = await Promise.all([
           db.select().from(regions).orderBy(regions.name),
           db
             .select({
@@ -303,8 +479,10 @@ export async function listAssets(
                 sql<number>`count(*) filter (where ${assets.type} = 'atm')::int`,
               gabCount:
                 sql<number>`count(*) filter (where ${assets.type} = 'gab')::int`,
-              internetFacing:
-                sql<number>`count(*) filter (where ${assets.exposureLevel} = 'internet_facing')::int`,
+              outdoorGabs:
+                sql<number>`count(*) filter (where ${assets.gabExposureType} in ('outdoor_agency', 'outdoor_commercial_center', 'outdoor_public_street'))::int`,
+              unknownGabExposureCount:
+                sql<number>`count(*) filter (where ${assets.gabExposureType} = 'unknown')::int`,
             })
             .from(assets)
             .where(eq(assets.organizationId, organizationId)),
@@ -312,16 +490,23 @@ export async function listAssets(
           db
             .select({
               asset: assets,
+              application: businessApplications,
               regionName: regions.name,
               ownerName: profiles.fullName,
             })
             .from(assets)
+            .leftJoin(
+              businessApplications,
+              eq(assets.businessApplicationId, businessApplications.id)
+            )
             .leftJoin(regions, eq(assets.regionId, regions.id))
             .leftJoin(profiles, eq(assets.ownerId, profiles.id))
             .where(where)
             .orderBy(desc(assets.createdAt), assets.assetCode)
             .limit(pagination.pageSize)
             .offset(pagination.offset),
+          ensureGabCidtTemplates(organizationId),
+          ensureAtmPaymentServicesApplication(organizationId),
         ]);
 
         const assetIds = assetRows.map((row) => row.asset.id);
@@ -349,7 +534,7 @@ export async function listAssets(
 
         return {
           assets: buildPaginatedResult(
-            mapAssets(assetRows, vulnerabilityRows),
+            mapAssets(assetRows, templates, vulnerabilityRows),
             totalRows[0]?.total ?? 0,
             pagination
           ),
@@ -358,11 +543,38 @@ export async function listAssets(
             name: region.name,
             code: region.code,
           })),
+          gabCidtTemplates: templateDisplayRows(templates).map((template) => ({
+            templateKey: template.templateKey,
+            label: template.label,
+            cidtConfidentiality: template.cidtConfidentiality,
+            cidtIntegrity: template.cidtIntegrity,
+            cidtAvailability: template.cidtAvailability,
+            cidtTraceability: template.cidtTraceability,
+            sensitivity: template.sensitivity,
+          })),
+          atmPaymentServicesCidt: {
+            cidtConfidentiality: atmPaymentServices.cidtConfidentiality,
+            cidtIntegrity: atmPaymentServices.cidtIntegrity,
+            cidtAvailability: atmPaymentServices.cidtAvailability,
+            cidtTraceability: atmPaymentServices.cidtTraceability,
+            sensitivity: toSensitivityLevel(
+              calculateCidtSensitivity(
+                {
+                  confidentiality: atmPaymentServices.cidtConfidentiality,
+                  integrity: atmPaymentServices.cidtIntegrity,
+                  availability: atmPaymentServices.cidtAvailability,
+                  traceability: atmPaymentServices.cidtTraceability,
+                },
+                4
+              )
+            ),
+          },
           summary: {
             totalAssets: summary?.totalAssets ?? 0,
             atmCount: summary?.atmCount ?? 0,
             gabCount: summary?.gabCount ?? 0,
-            internetFacing: summary?.internetFacing ?? 0,
+            outdoorGabs: summary?.outdoorGabs ?? 0,
+            unknownGabExposureCount: summary?.unknownGabExposureCount ?? 0,
           },
         };
       },
@@ -379,11 +591,20 @@ export async function listAssets(
     return {
       assets: buildPaginatedResult([], 0, pagination),
       regionOptions: [],
+      gabCidtTemplates: [],
+      atmPaymentServicesCidt: {
+        cidtConfidentiality: 4,
+        cidtIntegrity: 4,
+        cidtAvailability: 4,
+        cidtTraceability: 4,
+        sensitivity: "S4",
+      },
       summary: {
         totalAssets: 0,
         atmCount: 0,
         gabCount: 0,
-        internetFacing: 0,
+        outdoorGabs: 0,
+        unknownGabExposureCount: 0,
       },
     };
   }
@@ -413,6 +634,13 @@ export async function createAsset(
     );
   }
 
+  const application = await ensureAtmPaymentServicesApplication(organizationId);
+  const hasCustomCidt = hasCompleteCidt({
+    confidentiality: parsed.data.cidtConfidentiality,
+    integrity: parsed.data.cidtIntegrity,
+    availability: parsed.data.cidtAvailability,
+    traceability: parsed.data.cidtTraceability,
+  });
   const [row] = await db
     .insert(assets)
     .values({
@@ -424,6 +652,19 @@ export async function createAsset(
       location: parsed.data.location || null,
       ipAddress: parsed.data.ipAddress || null,
       osVersion: parsed.data.osVersion || null,
+      businessApplicationId: application.id,
+      gabExposureType: parsed.data.gabExposureType,
+      cidtOverrideEnabled: hasCustomCidt,
+      cidtConfidentiality: hasCustomCidt
+        ? parsed.data.cidtConfidentiality ?? null
+        : null,
+      cidtIntegrity: hasCustomCidt ? parsed.data.cidtIntegrity ?? null : null,
+      cidtAvailability: hasCustomCidt
+        ? parsed.data.cidtAvailability ?? null
+        : null,
+      cidtTraceability: hasCustomCidt
+        ? parsed.data.cidtTraceability ?? null
+        : null,
       ownerId: parsed.data.ownerId ?? createdByUserId ?? null,
       regionId: parsed.data.regionId ?? null,
       metadata: {
@@ -442,6 +683,55 @@ export async function createAsset(
   return row;
 }
 
+export async function updateAssetBusinessContext(
+  organizationId: string,
+  input: z.input<typeof updateAssetBusinessContextSchema>
+) {
+  const db = getDb();
+
+  if (!db) {
+    throw new AppError(
+      "service_unavailable",
+      "DATABASE_URL is missing. Asset writes are disabled."
+    );
+  }
+
+  const parsed = updateAssetBusinessContextSchema.parse(input);
+  const application = await ensureAtmPaymentServicesApplication(organizationId);
+  const customOverride = parsed.cidtOverrideEnabled;
+  const [row] = await db
+    .update(assets)
+    .set({
+      businessApplicationId: application.id,
+      gabExposureType: parsed.gabExposureType,
+      cidtOverrideEnabled: customOverride,
+      cidtConfidentiality: customOverride
+        ? parsed.cidtConfidentiality ?? null
+        : null,
+      cidtIntegrity: customOverride ? parsed.cidtIntegrity ?? null : null,
+      cidtAvailability: customOverride ? parsed.cidtAvailability ?? null : null,
+      cidtTraceability: customOverride ? parsed.cidtTraceability ?? null : null,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(assets.organizationId, organizationId),
+        eq(assets.assetCode, parsed.assetCode)
+      )
+    )
+    .returning();
+
+  if (!row) {
+    throw new AppError("not_found", "Asset not found.");
+  }
+
+  await recalculateBusinessPrioritiesForOrganization(organizationId, {
+    assetId: row.id,
+  });
+
+  return row;
+}
+
 export async function getAssetDetail(
   organizationId: string,
   assetCode: string
@@ -455,10 +745,15 @@ export async function getAssetDetail(
   const [assetRow] = await db
     .select({
       asset: assets,
+      application: businessApplications,
       regionName: regions.name,
       ownerName: profiles.fullName,
     })
     .from(assets)
+    .leftJoin(
+      businessApplications,
+      eq(assets.businessApplicationId, businessApplications.id)
+    )
     .leftJoin(regions, eq(assets.regionId, regions.id))
     .leftJoin(profiles, eq(assets.ownerId, profiles.id))
     .where(and(eq(assets.organizationId, organizationId), eq(assets.assetCode, assetCode)))
@@ -467,6 +762,8 @@ export async function getAssetDetail(
   if (!assetRow) {
     return null;
   }
+
+  const templates = await ensureGabCidtTemplates(organizationId);
 
   const vulnerabilityRows = await db
     .select({
@@ -490,7 +787,7 @@ export async function getAssetDetail(
     severity: row.cve?.severity ?? null,
   }));
 
-  const [mappedAsset] = mapAssets([assetRow], statsRows);
+  const [mappedAsset] = mapAssets([assetRow], templates, statsRows);
 
   const vulnerabilities = vulnerabilityRows.map(({ av, cve }) => ({
     id: av.id,
@@ -522,7 +819,21 @@ export async function getAssetDetail(
     primaryRemediation: "",
     compensatingControls: [],
     confidenceScore: 0,
-    contextReason: "",
+    contextReason:
+      typeof av.priorityFactors === "object" && av.priorityFactors
+        ? String(av.priorityFactors.summary ?? "")
+        : "",
+    priorityFactors:
+      typeof av.priorityFactors === "object" && av.priorityFactors
+        ? {
+            summary: String(av.priorityFactors.summary ?? ""),
+            businessImpact: String(av.priorityFactors.businessImpact ?? ""),
+            remediationUrgency: String(av.priorityFactors.remediationUrgency ?? ""),
+            missingContext: Array.isArray(av.priorityFactors.missingContext)
+              ? av.priorityFactors.missingContext.map(String)
+              : [],
+          }
+        : undefined,
     aiSummary: "",
     enrichmentStatus: "Pending",
     enrichmentError: "",

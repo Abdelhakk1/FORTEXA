@@ -4,7 +4,7 @@ import type {
 } from "./types";
 
 // ─── ASSETS ────────────────────────────────────────────────────────
-export const assets: Asset[] = [
+export const assets = [
   { id: "ATM-001", name: "ATM Casablanca Central", type: "ATM", model: "NCR SelfServ 80", manufacturer: "NCR", branch: "Casablanca Central", region: "Casablanca-Settat", location: "20 Blvd Mohammed V, Casablanca", ipAddress: "10.1.1.10", osVersion: "Windows 10 IoT LTSC 2021", criticality: "Critical", exposureLevel: "Internet-Facing", status: "Active", owner: "Youssef Bennani", lastScanDate: "2026-04-10", vulnerabilityCount: 12, maxSeverity: "CRITICAL", contextualPriority: "P1", riskScore: 92 },
   { id: "ATM-002", name: "ATM Rabat Agdal", type: "ATM", model: "Diebold Nixdorf CS 2020", manufacturer: "Diebold Nixdorf", branch: "Rabat Agdal", region: "Rabat-Salé-Kénitra", location: "15 Ave Hassan II, Rabat", ipAddress: "10.1.2.20", osVersion: "Windows 10 IoT LTSC 2019", criticality: "Critical", exposureLevel: "Internet-Facing", status: "Active", owner: "Fatima Zahra El Idrissi", lastScanDate: "2026-04-10", vulnerabilityCount: 8, maxSeverity: "HIGH", contextualPriority: "P1", riskScore: 85 },
   { id: "ATM-003", name: "ATM Marrakech Guéliz", type: "ATM", model: "Hyosung Halo II", manufacturer: "Hyosung", branch: "Marrakech Guéliz", region: "Marrakech-Safi", location: "Rue de la Liberté, Marrakech", ipAddress: "10.2.1.15", osVersion: "Windows 10 IoT LTSC 2021", criticality: "High", exposureLevel: "Internet-Facing", status: "Active", owner: "Ahmed Tazi", lastScanDate: "2026-04-09", vulnerabilityCount: 5, maxSeverity: "HIGH", contextualPriority: "P2", riskScore: 74 },
@@ -21,7 +21,7 @@ export const assets: Asset[] = [
   { id: "NET-001", name: "ATM Network Router Core", type: "Network Device", model: "Cisco ISR 4451", manufacturer: "Cisco", branch: "Casablanca HQ", region: "Casablanca-Settat", location: "Datacenter Casablanca", ipAddress: "10.0.0.1", osVersion: "IOS XE 17.6", criticality: "Critical", exposureLevel: "Internal", status: "Active", owner: "Network Team", lastScanDate: "2026-04-10", vulnerabilityCount: 5, maxSeverity: "HIGH", contextualPriority: "P2", riskScore: 72 },
   { id: "ATM-011", name: "ATM El Jadida Centre", type: "ATM", model: "Hyosung Halo II", manufacturer: "Hyosung", branch: "El Jadida Centre", region: "Casablanca-Settat", location: "Ave Mohammed V, El Jadida", ipAddress: "10.1.6.10", osVersion: "Windows 10 IoT LTSC 2021", criticality: "Medium", exposureLevel: "Internal", status: "Active", owner: "Youssef Bennani", lastScanDate: "2026-04-08", vulnerabilityCount: 4, maxSeverity: "MEDIUM", contextualPriority: "P3", riskScore: 42 },
   { id: "ATM-012", name: "ATM Nador Aéroport", type: "ATM", model: "NCR SelfServ 80", manufacturer: "NCR", branch: "Nador Aéroport", region: "Oriental", location: "Aéroport Nador", ipAddress: "10.6.2.10", osVersion: "Windows 10 IoT LTSC 2019", criticality: "High", exposureLevel: "Internet-Facing", status: "Active", owner: "Samira Hajji", lastScanDate: "2026-04-10", vulnerabilityCount: 9, maxSeverity: "HIGH", contextualPriority: "P2", riskScore: 76 },
-];
+] as unknown as Asset[];
 
 // ─── VULNERABILITIES ───────────────────────────────────────────────
 export const vulnerabilities: Vulnerability[] = [

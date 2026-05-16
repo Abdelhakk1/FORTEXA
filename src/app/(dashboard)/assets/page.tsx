@@ -25,6 +25,7 @@ export default async function AssetsPage({
     criticality: getValue(params.criticality) ?? "all",
     status: getValue(params.status) ?? "all",
     exposureLevel: getValue(params.exposureLevel) ?? "all",
+    gabExposureType: getValue(params.gabExposureType) ?? "all",
     page: Number(getValue(params.page) ?? "1") || 1,
   };
 
@@ -35,6 +36,7 @@ export default async function AssetsPage({
     criticality: filters.criticality,
     status: filters.status,
     exposureLevel: filters.exposureLevel,
+    gabExposureType: filters.gabExposureType,
     page: filters.page,
   });
   timing.end({ total: data.assets.total });

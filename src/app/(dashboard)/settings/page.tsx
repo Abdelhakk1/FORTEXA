@@ -10,6 +10,12 @@ import {
   canManageOrganizationTeam,
   listOrganizationInvites,
 } from "@/lib/services/team-invites";
+import { getAtmPaymentServicesApplication } from "@/lib/services/business-applications";
+import {
+  ensureGabCidtTemplates,
+  listAssetClassificationRules,
+  templateDisplayRows,
+} from "@/lib/services/gab-business-context";
 import { SettingsPageClient } from "./settings-page-client";
 
 export default async function SettingsPage() {
@@ -24,13 +30,24 @@ export default async function SettingsPage() {
     membershipRole: activeOrganization.membership.role,
     permissions: identity.permissions,
   });
-  const [sites, members, invites, auditEvents] = await Promise.all([
+  const [
+    sites,
+    members,
+    invites,
+    auditEvents,
+    atmPaymentServices,
+    gabCidtTemplates,
+    assetClassificationRules,
+  ] = await Promise.all([
     listOrganizationSites(organizationId),
     listOrganizationMembers(organizationId),
     canManageTeam ? listOrganizationInvites(organizationId) : Promise.resolve([]),
     canViewAudit
       ? listOrganizationAuditEvents(organizationId, 8)
       : Promise.resolve([]),
+    getAtmPaymentServicesApplication(organizationId),
+    ensureGabCidtTemplates(organizationId),
+    listAssetClassificationRules(organizationId),
   ]);
 
   return (
@@ -41,15 +58,34 @@ export default async function SettingsPage() {
       members={members}
       invites={invites}
       auditEvents={auditEvents}
+      atmPaymentServices={atmPaymentServices}
+      gabCidtTemplates={templateDisplayRows(gabCidtTemplates).map((template) => ({
+        id: template.id,
+        templateKey: template.templateKey,
+        label: template.label,
+        cidtConfidentiality: template.cidtConfidentiality,
+        cidtIntegrity: template.cidtIntegrity,
+        cidtAvailability: template.cidtAvailability,
+        cidtTraceability: template.cidtTraceability,
+        sensitivity: template.sensitivity,
+      }))}
+      assetClassificationRules={assetClassificationRules.map((rule) => ({
+        id: rule.id,
+        name: rule.name,
+        field: rule.field,
+        matchValue: rule.matchValue,
+        gabExposureType: rule.gabExposureType,
+        enabled: rule.enabled,
+      }))}
       canManageSettings={canManageSettings}
       canManageTeam={canManageTeam}
       canViewAudit={canViewAudit}
       emailDeliveryConfigured={isResendEmailConfigured()}
       aiProvider={{
-        provider: "OpenRouter",
-        model: serverEnv.openrouterModel,
-        baseUrl: serverEnv.openrouterBaseUrl,
-        configured: Boolean(serverEnv.openrouterApiKey),
+        provider: "DigitalOcean Gradient",
+        model: serverEnv.digitalOceanGradientModel,
+        baseUrl: serverEnv.digitalOceanGradientBaseUrl,
+        configured: Boolean(serverEnv.digitalOceanGradientApiKey),
       }}
     />
   );

@@ -2,10 +2,13 @@ import {
   pgTable,
   uuid,
   text,
+  integer,
+  boolean,
   timestamp,
   jsonb,
   index,
   unique,
+  check,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import {
@@ -13,10 +16,12 @@ import {
   assetStatusEnum,
   assetCriticalityEnum,
   exposureLevelEnum,
+  gabExposureTypeEnum,
 } from "./enums";
 import { regions } from "./regions";
 import { profiles } from "./profiles";
 import { organizations } from "./organizations";
+import { businessApplications } from "./business-applications";
 
 /**
  * Assets
@@ -68,6 +73,18 @@ export const assets = pgTable(
     exposureLevel: exposureLevelEnum("exposure_level")
       .notNull()
       .default("internal"),
+    gabExposureType: gabExposureTypeEnum("gab_exposure_type")
+      .notNull()
+      .default("unknown"),
+    cidtOverrideEnabled: boolean("cidt_override_enabled").notNull().default(false),
+    cidtConfidentiality: integer("cidt_confidentiality"),
+    cidtIntegrity: integer("cidt_integrity"),
+    cidtAvailability: integer("cidt_availability"),
+    cidtTraceability: integer("cidt_traceability"),
+    businessApplicationId: uuid("business_application_id").references(
+      () => businessApplications.id,
+      { onDelete: "set null" }
+    ),
     status: assetStatusEnum("status").notNull().default("active"),
 
     /**
@@ -98,8 +115,21 @@ export const assets = pgTable(
   (table) => [
     // ─── Operational indexes ──────────────────────────────────────────
     unique("uq_assets_org_asset_code").on(table.organizationId, table.assetCode),
+    check(
+      "chk_assets_cidt_range",
+      sql`(${table.cidtConfidentiality} is null or ${table.cidtConfidentiality} between 1 and 4)
+        and (${table.cidtIntegrity} is null or ${table.cidtIntegrity} between 1 and 4)
+        and (${table.cidtAvailability} is null or ${table.cidtAvailability} between 1 and 4)
+        and (${table.cidtTraceability} is null or ${table.cidtTraceability} between 1 and 4)`
+    ),
     index("idx_assets_org").on(table.organizationId),
     index("idx_assets_org_asset_code").on(table.organizationId, table.assetCode),
+    index("idx_assets_org_gab_exposure").on(table.organizationId, table.gabExposureType),
+    index("idx_assets_org_cidt_override").on(
+      table.organizationId,
+      table.cidtOverrideEnabled
+    ),
+    index("idx_assets_business_application").on(table.businessApplicationId),
     index("idx_assets_org_ip_not_null")
       .on(table.organizationId, table.ipAddress)
       .where(sql`${table.ipAddress} is not null`),

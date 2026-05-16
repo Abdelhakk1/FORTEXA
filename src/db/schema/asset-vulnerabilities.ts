@@ -6,6 +6,7 @@ import {
   timestamp,
   unique,
   index,
+  jsonb,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import {
@@ -83,6 +84,7 @@ export const assetVulnerabilities = pgTable(
      * Stored here for fast querying and filtering.
      */
     riskScore: integer("risk_score").notNull().default(0),
+    priorityFactors: jsonb("priority_factors").$type<Record<string, unknown>>(),
 
     slaDue: timestamp("sla_due", { withTimezone: true }),
     slaStatus: slaStatusEnum("sla_status").notNull().default("on_track"),

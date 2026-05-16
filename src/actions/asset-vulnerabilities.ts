@@ -5,7 +5,9 @@ import { logAuditEvent } from "@/lib/audit";
 import { requireActiveOrganization, requirePermission } from "@/lib/auth";
 import { ok, toActionResult, type ActionResult } from "@/lib/errors";
 import { measureServerTiming } from "@/lib/observability/timing";
-import { runAssetVulnerabilityEnrichment } from "@/lib/services/asset-vulnerability-enrichment";
+import {
+  runAssetVulnerabilityEnrichment,
+} from "@/lib/services/asset-vulnerability-enrichment";
 import { updateAssetVulnerabilityStatus } from "@/lib/services/asset-vulnerabilities";
 import { updateAiSettings } from "@/lib/services/organizations";
 
@@ -63,11 +65,12 @@ export async function retryAssetVulnerabilityEnrichmentAction(input: {
 
         const inline = await runAssetVulnerabilityEnrichment(
           input.assetVulnerabilityId,
-          {
-            force: input.force ?? true,
-            organizationId: activeOrganization.organization.id,
-          }
-        );
+        {
+          force: input.force ?? true,
+          organizationId: activeOrganization.organization.id,
+          triggerSource: "manual_retry",
+        }
+      );
 
         revalidatePath(`/vulnerabilities/${input.assetVulnerabilityId}`);
 
@@ -94,6 +97,49 @@ export async function retryAssetVulnerabilityEnrichmentAction(input: {
         return ok({
           assetVulnerabilityId: input.assetVulnerabilityId,
           mode: "inline",
+        });
+      } catch (error) {
+        return toActionResult(error);
+      }
+    },
+    undefined,
+    (result) => ({ ok: result.ok, code: result.ok ? "ok" : result.code })
+  );
+}
+
+export async function startAssetVulnerabilityEnrichmentAction(input: {
+  assetVulnerabilityId: string;
+}): Promise<
+  ActionResult<{
+    assetVulnerabilityId: string;
+    mode: "inline" | "skipped";
+  }>
+> {
+  return measureServerTiming(
+    "action.assetVulnerabilities.startEnrichment",
+    async () => {
+      try {
+        await requirePermission("cves.enrich");
+        const activeOrganization = await requireActiveOrganization();
+
+        const inline = await runAssetVulnerabilityEnrichment(
+          input.assetVulnerabilityId,
+          {
+            force: false,
+            organizationId: activeOrganization.organization.id,
+            triggerSource: "automatic_page_open",
+          }
+        );
+
+        if (!inline.ok) {
+          return inline;
+        }
+
+        revalidatePath(`/vulnerabilities/${input.assetVulnerabilityId}`);
+
+        return ok({
+          assetVulnerabilityId: input.assetVulnerabilityId,
+          mode: inline.data.status === "skipped" ? "skipped" : "inline",
         });
       } catch (error) {
         return toActionResult(error);

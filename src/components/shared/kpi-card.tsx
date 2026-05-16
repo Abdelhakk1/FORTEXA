@@ -1,7 +1,7 @@
 "use client";
 
 import { Card } from "@/components/ui/card";
-import { TrendingUp, TrendingDown, Minus, ArrowUpRight } from "lucide-react";
+import { TrendingUp, TrendingDown, Minus } from "lucide-react";
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 
@@ -37,9 +37,6 @@ export function KpiCard({ label, value, change, changeType = "neutral", icon, su
           )}
           {subtitle && <p className="text-xs text-white/60">{subtitle}</p>}
         </div>
-        <div aria-hidden="true" className="absolute top-4 right-4 flex h-8 w-8 items-center justify-center rounded-full bg-white/15 text-white/70 shrink-0">
-          <ArrowUpRight className="h-4 w-4" />
-        </div>
       </Card>
     );
   }
@@ -71,12 +68,6 @@ export function KpiCard({ label, value, change, changeType = "neutral", icon, su
           </div>
         )}
         {subtitle && <p className="text-xs text-[#6B7280] dark:text-[#94A3B8]">{subtitle}</p>}
-      </div>
-      <div
-        aria-hidden="true"
-        className="absolute top-4 right-4 flex h-8 w-8 items-center justify-center rounded-full border border-[#E9ECEF] text-[#9CA3AF] dark:border-[#27272a] dark:text-[#64748B]"
-      >
-        <ArrowUpRight className="h-4 w-4" />
       </div>
     </Card>
   );

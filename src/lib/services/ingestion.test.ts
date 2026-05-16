@@ -14,6 +14,19 @@ test("Nessus parser accepts the sample export and normalizes CVE IDs", async () 
   assert.ok(parsed.assets.length > 0);
   assert.ok(cveIds.length > 0);
   assert.ok(cveIds.every((cveId) => /^CVE-\d{4}-\d{4,}$/.test(cveId)));
+  assert.ok(parsed.assets.every((entry) => entry.asset.type === "atm" || entry.asset.type === "gab"));
+  assert.ok(parsed.assets.every((entry) => entry.asset.gabExposureType === "unknown"));
+  assert.ok(parsed.assets.every((entry) => entry.asset.cidtOverrideEnabled === false));
+  assert.ok(parsed.assets.every((entry) => entry.asset.businessApplicationId === null));
+  assert.ok(
+    parsed.assets.every(
+      (entry) =>
+        entry.asset.cidtConfidentiality === null &&
+        entry.asset.cidtIntegrity === null &&
+        entry.asset.cidtAvailability === null &&
+        entry.asset.cidtTraceability === null
+    )
+  );
 });
 
 test("Nessus parser rejects malformed XML before import processing", () => {
@@ -33,5 +46,18 @@ test("Nessus parser rejects non-Nessus XML", () => {
       error instanceof AppError &&
       error.code === "validation_error" &&
       /not a NessusClientData_v2 export/i.test(error.message)
+  );
+});
+
+test("Nessus parser rejects XML entity expansion primitives", () => {
+  assert.throws(
+    () =>
+      parseNessusXml(
+        '<!DOCTYPE foo [<!ENTITY x "y">]><NessusClientData_v2></NessusClientData_v2>'
+      ),
+    (error: unknown) =>
+      error instanceof AppError &&
+      error.code === "validation_error" &&
+      /entity expansion/i.test(error.message)
   );
 });

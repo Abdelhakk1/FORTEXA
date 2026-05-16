@@ -16,6 +16,9 @@ import {
   scanImports,
 } from "@/db/schema";
 import { AppError } from "@/lib/errors";
+import type { Asset } from "@/lib/types";
+import { buildAssetBusinessContext } from "./assets";
+import { prioritySummaryFromFactors } from "./business-priority";
 import {
   formatDate,
   formatDateTime,
@@ -50,6 +53,10 @@ export interface AssetVulnerabilityDetailData {
     ipAddress: string;
     criticality: string;
     exposureLevel: string;
+    gabExposureType: string;
+    gabExposureTypeDb: string;
+    cidt: Asset["cidt"];
+    businessApplication: Asset["businessApplication"];
     inferredRole: string;
     siteArchetype: string;
     inferenceConfidence: number;
@@ -74,6 +81,12 @@ export interface AssetVulnerabilityDetailData {
     patchAvailable: boolean;
     exploitMaturity: string;
     notes: string;
+    priorityFactors?: {
+      summary: string;
+      businessImpact: string;
+      remediationUrgency: string;
+      missingContext: string[];
+    };
     lastImport: {
       id: string;
       name: string;
@@ -105,6 +118,19 @@ export interface AssetVulnerabilityDetailData {
     riskScore: number | null;
     note: string | null;
   }>;
+  fixOrder: {
+    explanation: string;
+    sameRiskExplanation: string;
+    sameRiskCount: number;
+    tieBreakerSummary: string;
+    whyThisWins: string;
+    comparison: {
+      current: string;
+      peers: string;
+      tieBreaker: string;
+    };
+    factors: string[];
+  };
   relatedExposure: Array<{
     id: string;
     assetCode: string;
@@ -133,6 +159,8 @@ export interface AssetVulnerabilityDetailData {
     label: string;
     url: string;
     sourceType: string;
+    supportedFacts: string[];
+    retrievedAt: string;
     updatedAt: string;
   }>;
   ai: {
@@ -159,6 +187,10 @@ export interface AssetVulnerabilityDetailData {
     provider: string;
     error: string;
     enrichedAt: string;
+    updatedAt: string;
+    processingStartedAt: string;
+    attemptCount: number;
+    provenance: string;
     validationPassed: boolean;
   };
 }
@@ -251,6 +283,18 @@ export async function listAssetVulnerabilities(
       status: row.av.status,
       businessPriority: toUiBusinessPriority(row.av.businessPriority),
       riskScore: row.av.riskScore,
+      contextReason: prioritySummaryFromFactors(row.av.priorityFactors),
+      priorityFactors:
+        typeof row.av.priorityFactors === "object" && row.av.priorityFactors
+          ? {
+              summary: String(row.av.priorityFactors.summary ?? ""),
+              businessImpact: String(row.av.priorityFactors.businessImpact ?? ""),
+              remediationUrgency: String(row.av.priorityFactors.remediationUrgency ?? ""),
+              missingContext: Array.isArray(row.av.priorityFactors.missingContext)
+                ? row.av.priorityFactors.missingContext.map(String)
+                : [],
+            }
+          : undefined,
       slaDue: formatDate(row.av.slaDue),
       slaStatus: toUiSlaStatus(row.av.slaStatus),
       lastSeen: formatDate(row.av.lastSeen),
@@ -270,6 +314,26 @@ const lifecycleLabels: Record<string, string> = {
   task_linked: "Remediation linked",
   task_completed: "Remediation completed",
 };
+
+function isOutdoorGab(exposure: string | null | undefined) {
+  return /outdoor/i.test(exposure ?? "");
+}
+
+function compactJoin(parts: Array<string | null | undefined>) {
+  return parts.filter(Boolean).join(", ");
+}
+
+function buildReadableSignalList(signals: string[]) {
+  if (signals.length <= 1) {
+    return signals[0] ?? "deterministic Fortexa risk signals";
+  }
+
+  if (signals.length === 2) {
+    return `${signals[0]} and ${signals[1]}`;
+  }
+
+  return `${signals.slice(0, -1).join(", ")}, and ${signals[signals.length - 1]}`;
+}
 
 export async function getAssetVulnerabilityDetail(
   organizationId: string,
@@ -307,7 +371,16 @@ export async function getAssetVulnerabilityDetail(
     return null;
   }
 
-  const [lastImportRows, evidenceRows, eventRows, relatedRows, taskRows, alertRows, sourceRows] =
+  const [
+    lastImportRows,
+    evidenceRows,
+    eventRows,
+    relatedRows,
+    sameRiskRows,
+    taskRows,
+    alertRows,
+    sourceRows,
+  ] =
     await Promise.all([
       db
         .select({
@@ -382,6 +455,24 @@ export async function getAssetVulnerabilityDetail(
         .limit(6),
       db
         .select({
+          av: assetVulnerabilities,
+          asset: assets,
+          cve: cves,
+        })
+        .from(assetVulnerabilities)
+        .innerJoin(assets, eq(assetVulnerabilities.assetId, assets.id))
+        .innerJoin(cves, eq(assetVulnerabilities.cveId, cves.id))
+        .where(
+          and(
+            eq(assetVulnerabilities.organizationId, organizationId),
+            eq(assetVulnerabilities.riskScore, row.av.riskScore),
+            ne(assetVulnerabilities.id, assetVulnerabilityId)
+          )
+        )
+        .orderBy(desc(assetVulnerabilities.lastSeen))
+        .limit(5),
+      db
+        .select({
           task: remediationTasks,
           assignedName: profiles.fullName,
         })
@@ -419,6 +510,71 @@ export async function getAssetVulnerabilityDetail(
     reasons?: string[];
   };
   const lastImport = lastImportRows[0] ?? null;
+  const businessContext = buildAssetBusinessContext(row.asset, null);
+  const hasCisaKevSource = sourceRows.some(
+    (source) => source.sourceType === "cisa_kev"
+  );
+  const hasEpssSource = sourceRows.some((source) =>
+    /epss/i.test(`${source.name} ${source.retrievalMetadata?.retrievalMethod ?? ""}`)
+  );
+  const knownExploitation = hasCisaKevSource || row.cve.exploitMaturity === "active_in_wild";
+  const peerKnownExploitationCount = sameRiskRows.filter(
+    (peer) => peer.cve.exploitMaturity === "active_in_wild"
+  ).length;
+  const peerOutdoorCount = sameRiskRows.filter((peer) =>
+    isOutdoorGab(buildAssetBusinessContext(peer.asset, null).gabExposureType)
+  ).length;
+  const peerUrgentSlaCount = sameRiskRows.filter(
+    (peer) => peer.av.slaStatus !== "on_track"
+  ).length;
+  const tieBreakerSignals = [
+    knownExploitation
+      ? "known exploitation"
+      : null,
+    isOutdoorGab(businessContext.gabExposureType) ? "exposed GAB context" : null,
+    "ATM Payment Services impact",
+    `${businessContext.cidt.sensitivity} GAB sensitivity`,
+    `${businessContext.businessApplication.profile} application profile`,
+    row.av.slaStatus !== "on_track" ? "SLA urgency" : null,
+    inference.role && inference.role !== "unknown" ? `${inference.role} asset role` : null,
+    evidenceRows.length > 0 ? "scanner evidence quality" : null,
+    sourceRows.length > 0 ? "trusted source support" : null,
+  ].filter(Boolean) as string[];
+  const primaryTieBreakers = tieBreakerSignals.slice(0, 4);
+  const sameScorePeerSummary =
+    sameRiskRows.length > 0
+      ? compactJoin([
+          `${sameRiskRows.length} loaded peer${sameRiskRows.length === 1 ? "" : "s"} with score ${row.av.riskScore}`,
+          peerKnownExploitationCount
+            ? `${peerKnownExploitationCount} known exploited`
+            : "no loaded peer has confirmed KEV",
+          peerOutdoorCount
+            ? `${peerOutdoorCount} outdoor GAB${peerOutdoorCount === 1 ? "" : "s"}`
+            : "loaded peers are less exposed or unknown",
+          peerUrgentSlaCount
+            ? `${peerUrgentSlaCount} with SLA pressure`
+            : "no loaded peer has SLA pressure",
+        ])
+      : `No other loaded finding has score ${row.av.riskScore}.`;
+  const whyThisWins =
+    sameRiskRows.length > 0
+      ? `This finding is ranked above same-score findings because it combines ${buildReadableSignalList(
+          primaryTieBreakers
+        )}. The score is tied, so Fortexa uses deterministic tie-breakers: exploitation, GAB exposure, ATM Payment Services CIDT/profile, SLA urgency, scanner evidence, and trusted source strength.`
+      : `This finding is high in the queue because it combines ${buildReadableSignalList(
+          primaryTieBreakers
+        )}. Fortexa's order is deterministic and does not depend on AI deciding the rank.`;
+  const priorityFactors =
+    typeof row.av.priorityFactors === "object" && row.av.priorityFactors
+      ? {
+          summary: String(row.av.priorityFactors.summary ?? ""),
+          businessImpact: String(row.av.priorityFactors.businessImpact ?? ""),
+          remediationUrgency: String(row.av.priorityFactors.remediationUrgency ?? ""),
+          missingContext: Array.isArray(row.av.priorityFactors.missingContext)
+            ? row.av.priorityFactors.missingContext.map(String)
+            : [],
+        }
+      : undefined;
 
   return {
     id: assetVulnerabilityId,
@@ -432,6 +588,7 @@ export async function getAssetVulnerabilityDetail(
       ipAddress: row.asset.ipAddress ?? "—",
       criticality: row.asset.criticality,
       exposureLevel: row.asset.exposureLevel,
+      ...businessContext,
       inferredRole: inference.role ?? "unknown",
       siteArchetype: inference.siteArchetype ?? "unknown",
       inferenceConfidence: inference.confidence ?? 0,
@@ -456,6 +613,7 @@ export async function getAssetVulnerabilityDetail(
       patchAvailable: row.cve.patchAvailable,
       exploitMaturity: toUiExploitMaturity(row.cve.exploitMaturity),
       notes: row.av.notes ?? "",
+      priorityFactors,
       lastImport: lastImport
         ? {
             id: lastImport.id,
@@ -489,6 +647,49 @@ export async function getAssetVulnerabilityDetail(
       riskScore: event.riskScore ?? null,
       note: event.note ?? null,
     })),
+    fixOrder: {
+      explanation: [
+        `Fortexa ranks this item by deterministic recommended fix order, not by AI alone.`,
+        `${toUiBusinessPriority(row.av.businessPriority)} business priority and score ${row.av.riskScore}.`,
+        `${businessContext.gabExposureType} supporting ATM Payment Services.`,
+        `${toUiSeverity(row.cve.severity)} technical severity${row.cve.cvssScore ? ` with CVSS ${Number(row.cve.cvssScore)}` : ""}.`,
+        `${toUiExploitMaturity(row.cve.exploitMaturity)} exploit maturity.`,
+        `${toUiSlaStatus(row.av.slaStatus)} SLA status.`,
+      ].join(" "),
+      sameRiskExplanation:
+        sameRiskRows.length > 0
+          ? `There are ${sameRiskRows.length} other vulnerability record(s) with the same risk score. Fortexa breaks ties using GAB exposure, ATM Payment Services CIDT/profile, known exploitation, technical severity, SLA urgency, and scanner evidence quality.`
+          : "No other vulnerability currently has the same risk score in this workspace.",
+      sameRiskCount: sameRiskRows.length,
+      tieBreakerSummary:
+        sameRiskRows.length > 0
+          ? `There are ${sameRiskRows.length} other vulnerabilities with the same score. Fortexa ranks this one using ${primaryTieBreakers.join(", ")}.`
+          : "No same-score tie-breaker is currently needed.",
+      whyThisWins,
+      comparison: {
+        current: compactJoin([
+          `${toUiBusinessPriority(row.av.businessPriority)} / score ${row.av.riskScore}`,
+          `${businessContext.gabExposureType}`,
+          `${knownExploitation ? "CISA KEV or active exploitation" : toUiExploitMaturity(row.cve.exploitMaturity)}`,
+          `${businessContext.cidt.sensitivity} GAB / ${businessContext.businessApplication.profile}`,
+          `${evidenceRows.length} scanner evidence record${evidenceRows.length === 1 ? "" : "s"}`,
+          `${sourceRows.length} trusted source${sourceRows.length === 1 ? "" : "s"}`,
+        ]),
+        peers: sameScorePeerSummary,
+        tieBreaker: buildReadableSignalList(primaryTieBreakers),
+      },
+      factors: [
+        priorityFactors?.summary ??
+          prioritySummaryFromFactors(row.av.priorityFactors),
+        hasCisaKevSource
+          ? "CISA KEV source retrieved; known exploitation increases urgency."
+          : "No CISA KEV source is linked yet.",
+        hasEpssSource
+          ? "EPSS likelihood source retrieved for exploit probability context."
+          : "No EPSS source is linked yet.",
+        `${evidenceRows.length} scanner evidence record(s) support this asset-vulnerability match.`,
+      ],
+    },
     relatedExposure: relatedRows.map((related) => ({
       id: related.av.id,
       assetCode: related.assetCode ?? "—",
@@ -517,6 +718,8 @@ export async function getAssetVulnerabilityDetail(
       label: source.name,
       url: source.url,
       sourceType: source.sourceType,
+      supportedFacts: source.supportedFacts ?? [],
+      retrievedAt: formatDateTime(source.retrievedAt ?? null),
       updatedAt: formatDateTime(source.updatedAt),
     })),
     ai: {
@@ -538,6 +741,13 @@ export async function getAssetVulnerabilityDetail(
       provider: row.enrichment?.aiProvider ?? "",
       error: row.enrichment?.aiError ?? "",
       enrichedAt: formatDateTime(row.enrichment?.enrichedAt ?? null),
+      updatedAt: formatDateTime(row.enrichment?.updatedAt ?? null),
+      processingStartedAt: formatDateTime(row.enrichment?.processingStartedAt ?? null),
+      attemptCount: row.enrichment?.attemptCount ?? 0,
+      provenance:
+        row.enrichment?.trustLabels?.find((label) =>
+          /automatic|manual|background/i.test(label)
+        ) ?? "Not generated yet",
       validationPassed: row.enrichment?.validationPassed ?? false,
     },
   };

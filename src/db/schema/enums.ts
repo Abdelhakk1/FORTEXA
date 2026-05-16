@@ -50,6 +50,14 @@ export const exposureLevelEnum = pgEnum("exposure_level", [
   "isolated",
 ]);
 
+export const gabExposureTypeEnum = pgEnum("gab_exposure_type", [
+  "unknown",
+  "indoor_agency",
+  "outdoor_agency",
+  "outdoor_commercial_center",
+  "outdoor_public_street",
+]);
+
 // ─── CVE & Vulnerability ────────────────────────────────────────────
 
 export const exploitMaturityEnum = pgEnum("exploit_maturity", [

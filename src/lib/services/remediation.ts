@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, eq, inArray, isNull, ne } from "drizzle-orm";
+import { and, eq, inArray, isNull, lte, ne } from "drizzle-orm";
 import { z } from "zod";
 import { getDb } from "@/db";
 import {
@@ -14,6 +14,7 @@ import {
 } from "@/db/schema";
 import type { RemediationTask } from "@/lib/types";
 import { AppError } from "@/lib/errors";
+import { fortexaEventNames, sendFortexaEvent } from "./inngest";
 import {
   formatDate,
   getInitials,
@@ -110,7 +111,7 @@ export async function listAssignableProfiles() {
   }));
 }
 
-function computeTaskSlaStatus(input: {
+export function computeTaskSlaStatus(input: {
   dueDate?: Date | null;
   status?: typeof remediationTasks.$inferSelect.status;
 }) {
@@ -126,6 +127,22 @@ function computeTaskSlaStatus(input: {
     return "at_risk" as const;
   }
   return "on_track" as const;
+}
+
+async function queueNotification(input: {
+  organizationId: string;
+  kind: "task_assignment" | "sla_breach";
+  subject: string;
+  text: string;
+  recipientProfileId?: string | null;
+  remediationTaskId?: string | null;
+}) {
+  const queued = await sendFortexaEvent({
+    name: fortexaEventNames.notificationDispatchRequested,
+    data: input,
+  });
+
+  return queued.ok;
 }
 
 async function recordTaskEvent(input: {
@@ -220,6 +237,100 @@ async function syncTaskAlerts(task: typeof remediationTasks.$inferSelect) {
         )
       );
   }
+}
+
+export async function refreshOverdueRemediationTasks(
+  input: { limit?: number; now?: Date } = {}
+) {
+  const db = getDb();
+
+  if (!db) {
+    throw new AppError(
+      "service_unavailable",
+      "DATABASE_URL is missing. Remediation SLA refresh is disabled."
+    );
+  }
+
+  const now = input.now ?? new Date();
+  const rows = await db
+    .select()
+    .from(remediationTasks)
+    .where(
+      and(
+        lte(remediationTasks.dueDate, now),
+        ne(remediationTasks.slaStatus, "overdue"),
+        ne(remediationTasks.status, "closed"),
+        ne(remediationTasks.status, "mitigated")
+      )
+    )
+    .orderBy(remediationTasks.dueDate)
+    .limit(input.limit ?? 100);
+
+  let alertsCreated = 0;
+  let notificationsQueued = 0;
+
+  for (const task of rows) {
+    const [updated] = await db
+      .update(remediationTasks)
+      .set({ slaStatus: "overdue", updatedAt: now })
+      .where(
+        and(
+          eq(remediationTasks.organizationId, task.organizationId),
+          eq(remediationTasks.id, task.id),
+          ne(remediationTasks.slaStatus, "overdue")
+        )
+      )
+      .returning();
+
+    if (!updated) {
+      continue;
+    }
+
+    const [existingAlert] = await db
+      .select({ id: alerts.id })
+      .from(alerts)
+      .where(
+        and(
+          eq(alerts.organizationId, task.organizationId),
+          eq(alerts.relatedRemediationTaskId, task.id),
+          eq(alerts.type, "sla_breach")
+        )
+      )
+      .limit(1);
+
+    if (!existingAlert) {
+      await db.insert(alerts).values({
+        organizationId: task.organizationId,
+        title: "Remediation SLA breached",
+        description: `${task.title} is past its due date.`,
+        type: "sla_breach",
+        severity: task.priority,
+        status: "new",
+        relatedRemediationTaskId: task.id,
+        ownerId: task.assignedTo,
+      });
+      alertsCreated += 1;
+    }
+
+    const queued = await queueNotification({
+      organizationId: task.organizationId,
+      kind: "sla_breach",
+      subject: "Fortexa remediation SLA breached",
+      text: `${task.title} is now overdue. Review the remediation queue in Fortexa.`,
+      recipientProfileId: task.assignedTo,
+      remediationTaskId: task.id,
+    });
+
+    if (queued) {
+      notificationsQueued += 1;
+    }
+  }
+
+  return {
+    refreshed: rows.length,
+    alertsCreated,
+    notificationsQueued,
+  };
 }
 
 export async function listRemediationTasks(organizationId: string) {
@@ -478,6 +589,17 @@ export async function createRemediationTask(
 
   await syncTaskAlerts(row);
 
+  if (row.assignedTo) {
+    await queueNotification({
+      organizationId,
+      kind: "task_assignment",
+      subject: "Fortexa remediation task assigned",
+      text: `You were assigned: ${row.title}`,
+      recipientProfileId: row.assignedTo,
+      remediationTaskId: row.id,
+    });
+  }
+
   if (row.assetVulnerabilityId) {
     const [avRow] = await db
         .select({
@@ -609,6 +731,17 @@ export async function updateRemediationTask(
     .returning();
 
   await syncTaskAlerts(row);
+
+  if (row.assignedTo && row.assignedTo !== current.assignedTo) {
+    await queueNotification({
+      organizationId,
+      kind: "task_assignment",
+      subject: "Fortexa remediation task assigned",
+      text: `You were assigned: ${row.title}`,
+      recipientProfileId: row.assignedTo,
+      remediationTaskId: row.id,
+    });
+  }
 
   if (
     row.assetVulnerabilityId &&

@@ -9,7 +9,6 @@ export const fortexaEventNames = {
   cveEnrichmentRequested: "cve.enrichment.requested",
   assetVulnerabilityEnrichmentRequested:
     "asset_vulnerability.enrichment.requested",
-  reportGenerationRequested: "report.generation.requested",
   notificationDispatchRequested: "notification.dispatch.requested",
 } as const;
 

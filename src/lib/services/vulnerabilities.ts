@@ -11,6 +11,11 @@ import {
 } from "@/db/schema";
 import type { Asset, Vulnerability } from "@/lib/types";
 import { measureServerTiming } from "@/lib/observability/timing";
+import { buildAssetBusinessContext } from "./assets";
+import {
+  prioritySummaryFromFactors,
+  recommendedFixOrderScore,
+} from "./business-priority";
 import {
   formatDate,
   toUiAssetType,
@@ -38,6 +43,45 @@ const priorityRank = {
   p4: 4,
   p5: 5,
 } as const;
+
+function isOutdoorGab(exposure: string | null | undefined) {
+  return /outdoor/i.test(exposure ?? "");
+}
+
+function buildListTieBreakReason(vulnerability: Vulnerability) {
+  const signals = [
+    vulnerability.exploitMaturity === "Active in Wild (KEV)"
+      ? "known exploitation"
+      : null,
+    isOutdoorGab(vulnerability.gabExposureType)
+      ? "exposed outdoor GAB"
+      : null,
+    vulnerability.applicationSensitivity === "S4" ||
+    vulnerability.applicationProfile === "Profile 3" ||
+    vulnerability.applicationProfile === "Profile 4"
+      ? "ATM Payment Services sensitivity"
+      : null,
+    vulnerability.slaStatus !== "On Track" ? "SLA urgency" : null,
+    vulnerability.severity === "CRITICAL" ? "critical severity" : null,
+  ].filter(Boolean) as string[];
+  const topSignals = signals.slice(0, 3).join(", ");
+
+  if ((vulnerability.sameScoreCount ?? 0) > 0) {
+    return topSignals
+      ? `Wins same-score tie on ${topSignals}.`
+      : "Wins same-score tie on deterministic business context.";
+  }
+
+  if (vulnerability.fixRank === 1) {
+    return topSignals
+      ? `Recommended first because of ${topSignals}.`
+      : "Recommended first by Fortexa's deterministic fix order.";
+  }
+
+  return topSignals
+    ? `Ranked by ${topSignals}.`
+    : "Ranked by Fortexa's deterministic fix order.";
+}
 
 export interface VulnerabilityOverviewData {
   vulnerabilities: Vulnerability[];
@@ -105,68 +149,136 @@ export async function getVulnerabilityOverviewData(
         )
         .where(eq(assetVulnerabilities.organizationId, organizationId));
 
-      const vulnerabilities = avDetailRows
-        .map((row) => ({
-          id: row.av.id,
-          cveId: row.cve.cveId,
-          title: `${row.asset.assetCode} · ${row.cve.title}`,
-          description: row.cve.description ?? "",
-          severity: toUiSeverity(row.cve.severity),
-          cvssScore: row.cve.cvssScore ? Number(row.cve.cvssScore) : 0,
-          cvssVector: row.cve.cvssVector ?? "—",
-          businessPriority: toUiBusinessPriority(row.av.businessPriority),
-          exploitMaturity: toUiExploitMaturity(row.cve.exploitMaturity),
-          affectedAssetsCount: 1,
-          patchAvailable: row.cve.patchAvailable,
-          aiRemediationAvailable:
-            row.avEnrichment?.enrichmentStatus === "completed" ||
-            row.enrichment?.aiRemediationAvailable ||
-            false,
-          status: toUiLifecycleStatus(row.av.status),
-          firstSeen: formatDate(row.av.firstSeen),
-          lastSeen: formatDate(row.av.lastSeen),
-          slaDue: formatDate(row.av.slaDue),
-          slaStatus: toUiSlaStatus(row.av.slaStatus),
-          affectedProducts: row.cve.affectedProducts ?? [],
-          impactAnalysis: row.enrichment?.impactAnalysis ?? "",
-          exploitConditions: row.enrichment?.exploitConditions ?? "",
-          trustedSources: [],
-          primaryRemediation:
-            row.avEnrichment?.recommendedActions?.join("\n") ||
-            row.enrichment?.primaryRemediation ||
-            "",
-          compensatingControls: [],
-          confidenceScore:
-            row.avEnrichment?.confidenceScore ?? row.enrichment?.confidenceScore ?? 0,
-          contextReason:
-            row.avEnrichment?.businessRationale ??
-            row.enrichment?.contextReason ??
-            "",
-          aiSummary: row.avEnrichment?.summary ?? row.enrichment?.summary ?? "",
-          enrichmentStatus: toUiEnrichmentStatus(
-            row.avEnrichment?.enrichmentStatus ?? row.enrichment?.enrichmentStatus
-          ),
-          enrichmentError:
-            row.avEnrichment?.aiError ?? row.enrichment?.aiError ?? "",
-          enrichmentModel:
-            row.avEnrichment?.aiModel ?? row.enrichment?.aiModel ?? "",
-          aiEnrichedAt: formatDate(
-            row.avEnrichment?.enrichedAt ?? row.enrichment?.enrichedAt ?? null
-          ),
-          aiTags: row.enrichment?.tags ?? [],
-        }))
-        .sort((left, right) => {
-          const leftPriority =
-            priorityRank[left.businessPriority.toLowerCase() as keyof typeof priorityRank] ?? 99;
-          const rightPriority =
-            priorityRank[right.businessPriority.toLowerCase() as keyof typeof priorityRank] ?? 99;
+      const vulnerabilityRows = avDetailRows
+        .map((row) => {
+          const assetBusinessContext = buildAssetBusinessContext(row.asset, null);
+          const priorityFactors =
+            typeof row.av.priorityFactors === "object" && row.av.priorityFactors
+              ? {
+                  summary: String(row.av.priorityFactors.summary ?? ""),
+                  businessImpact: String(row.av.priorityFactors.businessImpact ?? ""),
+                  remediationUrgency: String(row.av.priorityFactors.remediationUrgency ?? ""),
+                  missingContext: Array.isArray(row.av.priorityFactors.missingContext)
+                    ? row.av.priorityFactors.missingContext.map(String)
+                    : [],
+                  applicationSensitivity: String(
+                    row.av.priorityFactors.applicationSensitivity ?? ""
+                  ),
+                  applicationProfile: String(row.av.priorityFactors.applicationProfile ?? ""),
+                  gabExposure: String(row.av.priorityFactors.gabExposure ?? ""),
+                }
+              : undefined;
+          const cvssScore = row.cve.cvssScore ? Number(row.cve.cvssScore) : 0;
+          const recommendedFixOrder = recommendedFixOrderScore({
+            businessPriority: row.av.businessPriority,
+            gabExposureType: row.asset.gabExposureType,
+            applicationSensitivity:
+              priorityFactors?.applicationSensitivity ||
+              assetBusinessContext.businessApplication.cidt.sensitivity,
+            applicationProfile:
+              priorityFactors?.applicationProfile ||
+              assetBusinessContext.businessApplication.profile,
+            severity: row.cve.severity,
+            cvssScore,
+            exploitMaturity: row.cve.exploitMaturity,
+            slaStatus: row.av.slaStatus,
+            riskScore: row.av.riskScore,
+          });
 
-          if (leftPriority !== rightPriority) {
-            return leftPriority - rightPriority;
+          return {
+            id: row.av.id,
+            cveId: row.cve.cveId,
+            title: `${row.asset.assetCode} · ${row.cve.title}`,
+            description: row.cve.description ?? "",
+            severity: toUiSeverity(row.cve.severity),
+            cvssScore,
+            cvssVector: row.cve.cvssVector ?? "—",
+            businessPriority: toUiBusinessPriority(row.av.businessPriority),
+            riskScore: row.av.riskScore,
+            recommendedFixOrder,
+            gabExposureType: assetBusinessContext.gabExposureType,
+            gabExposureTypeDb: assetBusinessContext.gabExposureTypeDb,
+            assetSensitivity: assetBusinessContext.cidt.sensitivity,
+            applicationSensitivity:
+              priorityFactors?.applicationSensitivity ||
+              assetBusinessContext.businessApplication.cidt.sensitivity,
+            applicationProfile:
+              priorityFactors?.applicationProfile ||
+              assetBusinessContext.businessApplication.profile,
+            exploitMaturity: toUiExploitMaturity(row.cve.exploitMaturity),
+            affectedAssetsCount: 1,
+            patchAvailable: row.cve.patchAvailable,
+            aiRemediationAvailable:
+              row.avEnrichment?.enrichmentStatus === "completed" ||
+              row.enrichment?.aiRemediationAvailable ||
+              false,
+            status: toUiLifecycleStatus(row.av.status),
+            firstSeen: formatDate(row.av.firstSeen),
+            lastSeen: formatDate(row.av.lastSeen),
+            slaDue: formatDate(row.av.slaDue),
+            slaStatus: toUiSlaStatus(row.av.slaStatus),
+            affectedProducts: row.cve.affectedProducts ?? [],
+            impactAnalysis: row.enrichment?.impactAnalysis ?? "",
+            exploitConditions: row.enrichment?.exploitConditions ?? "",
+            trustedSources: [],
+            primaryRemediation:
+              row.avEnrichment?.recommendedActions?.join("\n") ||
+              row.enrichment?.primaryRemediation ||
+              "",
+            compensatingControls: [],
+            confidenceScore:
+              row.avEnrichment?.confidenceScore ?? row.enrichment?.confidenceScore ?? 0,
+            contextReason:
+              row.avEnrichment?.businessRationale ??
+              row.enrichment?.contextReason ??
+              prioritySummaryFromFactors(row.av.priorityFactors),
+            priorityFactors,
+            aiSummary: row.avEnrichment?.summary ?? row.enrichment?.summary ?? "",
+            enrichmentStatus: toUiEnrichmentStatus(
+              row.avEnrichment?.enrichmentStatus ?? row.enrichment?.enrichmentStatus
+            ),
+            enrichmentError:
+              row.avEnrichment?.aiError ?? row.enrichment?.aiError ?? "",
+            enrichmentModel:
+              row.avEnrichment?.aiModel ?? row.enrichment?.aiModel ?? "",
+            aiEnrichedAt: formatDate(
+              row.avEnrichment?.enrichedAt ?? row.enrichment?.enrichedAt ?? null
+            ),
+            aiTags: row.enrichment?.tags ?? [],
+          };
+        })
+        .sort((left, right) => {
+          const orderDelta = right.recommendedFixOrder - left.recommendedFixOrder;
+
+          if (orderDelta !== 0) {
+            return orderDelta;
           }
 
-          return right.affectedAssetsCount - left.affectedAssetsCount;
+          return right.riskScore - left.riskScore;
         });
+      const scoreCounts = new Map<number, number>();
+
+      for (const vulnerability of vulnerabilityRows) {
+        const score = vulnerability.riskScore ?? 0;
+        scoreCounts.set(score, (scoreCounts.get(score) ?? 0) + 1);
+      }
+
+      const vulnerabilities = vulnerabilityRows.map((vulnerability, index) => {
+        const sameScoreCount = Math.max(
+          0,
+          (scoreCounts.get(vulnerability.riskScore ?? 0) ?? 1) - 1
+        );
+        const rankedVulnerability = {
+          ...vulnerability,
+          fixRank: index + 1,
+          sameScoreCount,
+        };
+
+        return {
+          ...rankedVulnerability,
+          tieBreakReason: buildListTieBreakReason(rankedVulnerability),
+        };
+      });
 
       const assetStats = new Map<
         string,
@@ -219,6 +331,7 @@ export async function getVulnerabilityOverviewData(
         osVersion: asset.osVersion ?? "—",
         criticality: toUiCriticality(asset.criticality),
         exposureLevel: toUiExposureLevel(asset.exposureLevel),
+        ...buildAssetBusinessContext(asset, null),
         status:
           asset.status === "active"
             ? "Active"

@@ -14,11 +14,43 @@ if (!databaseUrl) {
 const refreshSchemaCache = process.argv.includes("--refresh-schema-cache");
 const requiredColumns = [
   ["assets", "organization_id"],
+  ["assets", "gab_exposure_type"],
+  ["assets", "cidt_confidentiality"],
+  ["assets", "cidt_integrity"],
+  ["assets", "cidt_availability"],
+  ["assets", "cidt_traceability"],
+  ["assets", "cidt_override_enabled"],
+  ["assets", "business_application_id"],
   ["scan_imports", "organization_id"],
   ["scan_findings", "organization_id"],
   ["asset_vulnerabilities", "organization_id"],
+  ["asset_vulnerabilities", "priority_factors"],
   ["asset_vulnerability_events", "organization_id"],
   ["asset_vulnerability_enrichments", "organization_id"],
+  ["cve_source_references", "cve_id"],
+  ["cve_source_references", "source_type"],
+  ["cve_source_references", "retrieved_at"],
+  ["cve_source_references", "supported_facts"],
+  ["cve_source_references", "retrieval_metadata"],
+  ["business_applications", "organization_id"],
+  ["business_applications", "key"],
+  ["business_applications", "label"],
+  ["business_applications", "cidt_confidentiality"],
+  ["business_applications", "cidt_integrity"],
+  ["business_applications", "cidt_availability"],
+  ["business_applications", "cidt_traceability"],
+  ["business_applications", "is_internet_exposed"],
+  ["gab_cidt_templates", "organization_id"],
+  ["gab_cidt_templates", "template_key"],
+  ["gab_cidt_templates", "cidt_confidentiality"],
+  ["gab_cidt_templates", "cidt_integrity"],
+  ["gab_cidt_templates", "cidt_availability"],
+  ["gab_cidt_templates", "cidt_traceability"],
+  ["asset_classification_rules", "organization_id"],
+  ["asset_classification_rules", "field"],
+  ["asset_classification_rules", "match_value"],
+  ["asset_classification_rules", "gab_exposure_type"],
+  ["asset_classification_rules", "enabled"],
   ["remediation_tasks", "organization_id"],
   ["alerts", "organization_id"],
   ["report_definitions", "organization_id"],
@@ -165,13 +197,72 @@ async function runAuditLogChecks() {
   }
 }
 
+async function runRlsPolicyChecks() {
+  const tableNames = Array.from(new Set(requiredColumns.map(([table]) => table)));
+  const memberScopedTableNames = tableNames.filter(
+    (table) => table !== "cve_source_references"
+  );
+  const rlsRows = await sql`
+    select c.relname as table_name, c.relrowsecurity as rls_enabled
+    from pg_class c
+    join pg_namespace n on n.oid = c.relnamespace
+    where n.nspname = 'public'
+      and c.relkind = 'r'
+      and c.relname in ${sql(tableNames)}
+  `;
+  const policyRows = await sql`
+    select tablename as table_name, policyname, qual, with_check
+    from pg_policies
+    where schemaname = 'public'
+      and tablename in ${sql(tableNames)}
+  `;
+  const rlsByTable = new Map(
+    rlsRows.map((row) => [row.table_name, row.rls_enabled === true])
+  );
+  const policiesByTable = new Map();
+
+  for (const row of policyRows) {
+    const policies = policiesByTable.get(row.table_name) ?? [];
+    policies.push(row);
+    policiesByTable.set(row.table_name, policies);
+  }
+
+  const missing = tableNames.filter((table) => !rlsByTable.get(table));
+  const missingPolicies = memberScopedTableNames.filter(
+    (table) => (policiesByTable.get(table) ?? []).length === 0
+  );
+  const missingOrgMemberPolicies = memberScopedTableNames.filter((table) => {
+    const policies = policiesByTable.get(table) ?? [];
+    return !policies.some((policy) =>
+      `${policy.qual ?? ""} ${policy.with_check ?? ""}`.includes(
+        "fortexa_is_org_member"
+      )
+    );
+  });
+
+  if (missing.length || missingPolicies.length || missingOrgMemberPolicies.length) {
+    throw new Error(
+      `RLS policy smoke failed: ${JSON.stringify({
+        missing,
+        missingPolicies,
+        missingOrgMemberPolicies,
+      })}`
+    );
+  }
+
+  return {
+    rlsEnabled: tableNames.length,
+    memberScopedPolicies: memberScopedTableNames.length,
+  };
+}
+
 try {
   const rows = await sql`
     select table_name, column_name, is_nullable
     from information_schema.columns
     where table_schema = 'public'
       and table_name in ${sql(requiredColumns.map(([table]) => table))}
-      and column_name = 'organization_id'
+      and column_name in ${sql(Array.from(new Set(requiredColumns.map(([, column]) => column))))}
     order by table_name, column_name
   `;
 
@@ -199,6 +290,7 @@ try {
     process.exitCode = 1;
   } else {
     const auditLogChecks = await runAuditLogChecks();
+    const rlsPolicyChecks = await runRlsPolicyChecks();
 
     console.log(
       JSON.stringify(
@@ -206,6 +298,7 @@ try {
           result: "passed",
           checked: requiredColumns.map(([table, column]) => `${table}.${column}`),
           auditLogChecks,
+          rlsPolicyChecks,
           refreshedPostgrestSchemaCache: refreshSchemaCache,
         },
         null,

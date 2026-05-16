@@ -15,13 +15,14 @@ function isNearWhite(rgb) {
 }
 
 async function signIn(page, credentials) {
-  await page.goto(`${baseUrl}/login`, { waitUntil: "networkidle" });
-  await page.fill("#email", credentials.email);
-  await page.fill("#password", credentials.password);
-  await Promise.all([
-    page.waitForURL("**/dashboard", { timeout: 30_000 }),
-    page.locator("form").getByRole("button", { name: /^sign in$/i }).click(),
-  ]);
+  await page.goto(`${baseUrl}/login`, { waitUntil: "domcontentloaded" });
+  await page.waitForTimeout(1_000);
+  await page.locator("#email").waitFor({ state: "visible", timeout: 30_000 });
+  await page.click("#email");
+  await page.keyboard.type(credentials.email);
+  await page.click("#password");
+  await page.keyboard.type(credentials.password);
+  await page.locator("form").getByRole("button", { name: /^sign in$/i }).click();
   await page.getByRole("heading", { name: "Security Dashboard", exact: true }).waitFor({
     state: "visible",
     timeout: 30_000,
@@ -88,7 +89,7 @@ try {
   await signIn(page, credentials);
   const initial = await collectBackground(page);
   const transitions = [
-    await navigateAndSample(page, "Assets", "Asset Management"),
+    await navigateAndSample(page, "Assets", "GAB Asset Management"),
     await navigateAndSample(page, "Vulnerabilities", "Vulnerability Management"),
     await navigateAndSample(page, "Remediation", "Remediation"),
     await navigateAndSample(page, "Reports", "Reports"),

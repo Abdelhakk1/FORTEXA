@@ -18,6 +18,27 @@ export type VulnerabilityStatus =
   | "Compensating Control";
 
 // ─── Assets ────────────────────────────────────────────────────────
+export interface CidtContext {
+  confidentiality: number | null;
+  integrity: number | null;
+  availability: number | null;
+  traceability: number | null;
+  sensitivity: "S1" | "S2" | "S3" | "S4";
+  isComplete: boolean;
+  source?: string;
+  sourceLabel?: string;
+  templateKey?: string | null;
+  isCustomOverride?: boolean;
+}
+
+export interface AtmPaymentServicesContext {
+  label: "ATM Payment Services";
+  cidt: CidtContext;
+  profile: "Profile 1" | "Profile 2" | "Profile 3" | "Profile 4";
+  profileExplanation: string;
+  isInternetExposed: boolean;
+}
+
 export interface Asset {
   id: string;
   name: string;
@@ -31,6 +52,10 @@ export interface Asset {
   osVersion: string;
   criticality: "Critical" | "High" | "Medium" | "Low";
   exposureLevel: "Internet-Facing" | "Internal" | "Isolated";
+  gabExposureType: string;
+  gabExposureTypeDb: string;
+  cidt: CidtContext;
+  businessApplication: AtmPaymentServicesContext;
   status: AssetStatus;
   owner: string;
   lastScanDate: string;
@@ -50,6 +75,16 @@ export interface Vulnerability {
   cvssScore: number;
   cvssVector: string;
   businessPriority: BusinessPriority;
+  riskScore?: number;
+  recommendedFixOrder?: number;
+  fixRank?: number;
+  sameScoreCount?: number;
+  tieBreakReason?: string;
+  gabExposureType?: string;
+  gabExposureTypeDb?: string;
+  assetSensitivity?: string;
+  applicationSensitivity?: string;
+  applicationProfile?: string;
   exploitMaturity: ExploitMaturity;
   affectedAssetsCount: number;
   patchAvailable: boolean;
@@ -67,6 +102,15 @@ export interface Vulnerability {
   compensatingControls: CompensatingControl[];
   confidenceScore: number;
   contextReason: string;
+  priorityFactors?: {
+    summary: string;
+    businessImpact: string;
+    remediationUrgency: string;
+    missingContext: string[];
+    applicationSensitivity?: string;
+    applicationProfile?: string;
+    gabExposure?: string;
+  };
   aiSummary?: string;
   enrichmentStatus?: EnrichmentStatus;
   enrichmentError?: string;

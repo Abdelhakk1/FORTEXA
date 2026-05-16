@@ -5,6 +5,40 @@ import { inngest } from "./client";
 import { runAssetVulnerabilityEnrichment } from "@/lib/services/asset-vulnerability-enrichment";
 import { runCveEnrichment } from "@/lib/services/cve-enrichment";
 import { processScanImport } from "@/lib/services/ingestion";
+import {
+  dispatchOrganizationNotification,
+  type NotificationKind,
+} from "@/lib/services/notifications";
+import { refreshOverdueRemediationTasks } from "@/lib/services/remediation";
+
+const notificationKinds = new Set<NotificationKind>([
+  "import_failure",
+  "task_assignment",
+  "sla_breach",
+  "ai_failure",
+  "daily_digest",
+]);
+
+function readString(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function addInngestBreadcrumb(message: string, data: Record<string, unknown>) {
+  Sentry.addBreadcrumb({
+    category: "inngest",
+    message,
+    data: {
+      organizationId: readString(data.organizationId),
+      scanImportId: readString(data.scanImportId),
+      cveId: readString(data.cveId),
+      assetVulnerabilityId: readString(data.assetVulnerabilityId),
+      remediationTaskId: readString(data.remediationTaskId),
+      kind: readString(data.kind),
+      force: typeof data.force === "boolean" ? data.force : undefined,
+    },
+    level: "info",
+  });
+}
 
 const scanImportRequested = inngest.createFunction(
   {
@@ -12,12 +46,7 @@ const scanImportRequested = inngest.createFunction(
     triggers: [{ event: "scan.import.requested" }],
   },
   async ({ event }) => {
-    Sentry.addBreadcrumb({
-      category: "inngest",
-      message: "scan.import.requested",
-      data: event.data,
-      level: "info",
-    });
+    addInngestBreadcrumb("scan.import.requested", event.data);
 
     const scanImportId =
       typeof event.data.scanImportId === "string" ? event.data.scanImportId : null;
@@ -48,12 +77,7 @@ const cveEnrichmentRequested = inngest.createFunction(
     triggers: [{ event: "cve.enrichment.requested" }],
   },
   async ({ event }) => {
-    Sentry.addBreadcrumb({
-      category: "inngest",
-      message: "cve.enrichment.requested",
-      data: event.data,
-      level: "info",
-    });
+    addInngestBreadcrumb("cve.enrichment.requested", event.data);
 
     const cveId = typeof event.data.cveId === "string" ? event.data.cveId : null;
 
@@ -85,12 +109,7 @@ const assetVulnerabilityEnrichmentRequested = inngest.createFunction(
     triggers: [{ event: "asset_vulnerability.enrichment.requested" }],
   },
   async ({ event }) => {
-    Sentry.addBreadcrumb({
-      category: "inngest",
-      message: "asset_vulnerability.enrichment.requested",
-      data: event.data,
-      level: "info",
-    });
+    addInngestBreadcrumb("asset_vulnerability.enrichment.requested", event.data);
 
     const assetVulnerabilityId =
       typeof event.data.assetVulnerabilityId === "string"
@@ -107,6 +126,12 @@ const assetVulnerabilityEnrichmentRequested = inngest.createFunction(
 
     const result = await runAssetVulnerabilityEnrichment(assetVulnerabilityId, {
       force: Boolean(event.data.force),
+      triggerSource:
+        event.data.triggerSource === "automatic_import" ||
+        event.data.triggerSource === "automatic_page_open" ||
+        event.data.triggerSource === "manual_retry"
+          ? event.data.triggerSource
+          : "background_retry",
     });
 
     return {
@@ -119,22 +144,20 @@ const assetVulnerabilityEnrichmentRequested = inngest.createFunction(
   }
 );
 
-const reportGenerationRequested = inngest.createFunction(
+const remediationSlaRefreshRequested = inngest.createFunction(
   {
-    id: "report-generation-requested",
-    triggers: [{ event: "report.generation.requested" }],
+    id: "remediation-sla-refresh-requested",
+    triggers: [{ cron: "*/15 * * * *" }],
   },
-  async ({ event }) => {
-    Sentry.addBreadcrumb({
-      category: "inngest",
-      message: "report.generation.requested",
-      data: event.data,
-      level: "info",
-    });
+  async () => {
+    addInngestBreadcrumb("remediation.sla.refresh", {});
+    const result = await refreshOverdueRemediationTasks();
 
     return {
       received: true,
-      kind: "report-generation",
+      kind: "remediation-sla-refresh",
+      refreshed: result.refreshed,
+      alertsCreated: result.alertsCreated,
     };
   }
 );
@@ -145,16 +168,39 @@ const notificationDispatchRequested = inngest.createFunction(
     triggers: [{ event: "notification.dispatch.requested" }],
   },
   async ({ event }) => {
-    Sentry.addBreadcrumb({
-      category: "inngest",
-      message: "notification.dispatch.requested",
-      data: event.data,
-      level: "info",
+    addInngestBreadcrumb("notification.dispatch.requested", event.data);
+
+    const organizationId = readString(event.data.organizationId);
+    const kind = readString(event.data.kind);
+    const subject = readString(event.data.subject);
+    const text = readString(event.data.text);
+
+    if (
+      !organizationId ||
+      !kind ||
+      !notificationKinds.has(kind as NotificationKind) ||
+      !subject ||
+      !text
+    ) {
+      return {
+        received: false,
+        kind: "notification-dispatch",
+        reason: "invalid_notification_payload",
+      };
+    }
+
+    const result = await dispatchOrganizationNotification({
+      organizationId,
+      kind: kind as NotificationKind,
+      subject,
+      text,
+      recipientProfileId: readString(event.data.recipientProfileId),
     });
 
     return {
       received: true,
       kind: "notification-dispatch",
+      status: result.status,
     };
   }
 );
@@ -163,6 +209,6 @@ export const inngestFunctions = [
   scanImportRequested,
   cveEnrichmentRequested,
   assetVulnerabilityEnrichmentRequested,
-  reportGenerationRequested,
+  remediationSlaRefreshRequested,
   notificationDispatchRequested,
 ];

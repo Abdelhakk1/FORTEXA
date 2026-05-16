@@ -233,11 +233,12 @@ function deriveLegacyContext(
   return {
     atmGabFleet:
       input.primaryEnvironment === "atm_gab_devices" ||
-      input.primaryEnvironment === "atm_gab_branch_systems",
+      input.primaryEnvironment === "indoor_outdoor_gab_fleet" ||
+      input.primaryEnvironment === "branch_and_public_gab_fleet" ||
+      input.primaryEnvironment === "other_atm_gab_scope",
     vendorManagedSystems:
       input.remediationOwnership === "vendor_remediates" ||
-      input.remediationOwnership === "shared_internal_vendor" ||
-      input.primaryEnvironment === "customer_managed_environments",
+      input.remediationOwnership === "shared_internal_vendor",
   };
 }
 

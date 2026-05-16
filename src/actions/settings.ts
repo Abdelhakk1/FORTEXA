@@ -40,6 +40,17 @@ import {
   isResendEmailConfigured,
   sendTeamInviteEmail,
 } from "@/lib/services/resend";
+import {
+  atmPaymentServicesSettingsSchema,
+  recalculateBusinessPrioritiesForOrganization,
+  updateAtmPaymentServicesApplication,
+} from "@/lib/services/business-applications";
+import {
+  assetClassificationRulesSettingsSchema,
+  gabCidtTemplatesSettingsSchema,
+  replaceAssetClassificationRules,
+  updateGabCidtTemplates,
+} from "@/lib/services/gab-business-context";
 
 async function getSettingsActionContext() {
   const [identity, active] = await Promise.all([
@@ -223,6 +234,81 @@ export async function updateSlaPolicyAction(input: unknown) {
       resourceType: "organization",
       resourceId: active.organization.id,
       details: parsed,
+    });
+    revalidatePath("/settings");
+    return ok({ id: active.organization.id });
+  } catch (error) {
+    return toActionResult(error);
+  }
+}
+
+export async function updateAtmPaymentServicesAction(input: unknown) {
+  try {
+    const { identity, active } = await getSettingsActionContext();
+    const parsed = atmPaymentServicesSettingsSchema.parse(input);
+    await updateAtmPaymentServicesApplication(active.organization.id, parsed);
+    await logAuditEvent({
+      organizationId: active.organization.id,
+      userId: identity.profile?.id ?? null,
+      action: "settings.atm_payment_services_cidt_updated",
+      resourceType: "business_application",
+      resourceId: active.organization.id,
+      details: {
+        cidtConfidentiality: parsed.cidtConfidentiality,
+        cidtIntegrity: parsed.cidtIntegrity,
+        cidtAvailability: parsed.cidtAvailability,
+        cidtTraceability: parsed.cidtTraceability,
+        isInternetExposed: parsed.isInternetExposed,
+      },
+    });
+    revalidatePath("/settings");
+    revalidatePath("/assets");
+    revalidatePath("/vulnerabilities");
+    revalidatePath("/dashboard");
+    revalidatePath("/reports");
+    return ok({ id: active.organization.id });
+  } catch (error) {
+    return toActionResult(error);
+  }
+}
+
+export async function updateGabCidtTemplatesAction(input: unknown) {
+  try {
+    const { identity, active } = await getSettingsActionContext();
+    const parsed = gabCidtTemplatesSettingsSchema.parse(input);
+    await updateGabCidtTemplates(active.organization.id, parsed);
+    await recalculateBusinessPrioritiesForOrganization(active.organization.id);
+    await logAuditEvent({
+      organizationId: active.organization.id,
+      userId: identity.profile?.id ?? null,
+      action: "settings.gab_cidt_templates_updated",
+      resourceType: "gab_cidt_templates",
+      resourceId: active.organization.id,
+      details: { templates: parsed.templates.map((template) => template.templateKey) },
+    });
+    revalidatePath("/settings");
+    revalidatePath("/assets");
+    revalidatePath("/vulnerabilities");
+    revalidatePath("/dashboard");
+    revalidatePath("/reports");
+    return ok({ id: active.organization.id });
+  } catch (error) {
+    return toActionResult(error);
+  }
+}
+
+export async function updateAssetClassificationRulesAction(input: unknown) {
+  try {
+    const { identity, active } = await getSettingsActionContext();
+    const parsed = assetClassificationRulesSettingsSchema.parse(input);
+    await replaceAssetClassificationRules(active.organization.id, parsed);
+    await logAuditEvent({
+      organizationId: active.organization.id,
+      userId: identity.profile?.id ?? null,
+      action: "settings.asset_classification_rules_updated",
+      resourceType: "asset_classification_rules",
+      resourceId: active.organization.id,
+      details: { rules: parsed.rules.length },
     });
     revalidatePath("/settings");
     return ok({ id: active.organization.id });

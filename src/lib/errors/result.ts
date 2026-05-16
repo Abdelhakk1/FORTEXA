@@ -5,6 +5,7 @@ export type ResultCode =
   | "unauthenticated"
   | "forbidden"
   | "not_found"
+  | "rate_limited"
   | "server_error"
   | "service_unavailable";
 

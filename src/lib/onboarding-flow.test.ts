@@ -14,10 +14,10 @@ test("Fortexa onboarding has four MVP steps", () => {
   );
 });
 
-test("dedicated ATM/GAB area and AI steps are removed", () => {
+test("dedicated GAB area and AI steps are removed", () => {
   const labels = ONBOARDING_STEPS.map((step) => step.label.toLowerCase());
 
-  assert.equal(labels.some((label) => label.includes("atm/gab area")), false);
+  assert.equal(labels.some((label) => label.includes("gab area")), false);
   assert.equal(labels.includes("ai"), false);
 });
 

@@ -46,7 +46,53 @@ function readUrlEnv(value: string | undefined) {
   }
 }
 
+export function normalizeBaseUrlEnv(value: string | undefined) {
+  const trimmed = readEnv(value);
+
+  if (!trimmed) {
+    return undefined;
+  }
+
+  try {
+    return new URL(trimmed).toString().replace(/\/$/, "");
+  } catch {
+    return undefined;
+  }
+}
+
 export const defaultResendFromEmail = "Fortexa <onboarding@resend.dev>";
+export const DEFAULT_DIGITALOCEAN_GRADIENT_MODEL = "openai-gpt-oss-20b";
+export const DEFAULT_DIGITALOCEAN_GRADIENT_BASE_URL =
+  "https://inference.do-ai.run/v1";
+
+const digitalOceanGradientModelAccessKey =
+  readEnv(process.env.DIGITALOCEAN_GRADIENT_MODEL_ACCESS_KEY) ??
+  readEnv(process.env.MODEL_ACCESS_KEY);
+const digitalOceanGradientLegacyApiKey = readEnv(
+  process.env.DIGITALOCEAN_GRADIENT_API_KEY
+);
+const digitalOceanAccountToken = readEnv(process.env.DIGITALOCEAN_TOKEN);
+
+function buildDigitalOceanCredentialCandidates() {
+  const seen = new Set<string>();
+  const candidates: Array<{
+    source: "model_access_key" | "legacy_api_key" | "account_token";
+    value: string;
+  }> = [];
+
+  for (const [source, value] of [
+    ["model_access_key", digitalOceanGradientModelAccessKey],
+    ["legacy_api_key", digitalOceanGradientLegacyApiKey],
+    ["account_token", digitalOceanAccountToken],
+  ] as const) {
+    if (value && !seen.has(value)) {
+      seen.add(value);
+      candidates.push({ source, value });
+    }
+  }
+
+  return candidates;
+}
 
 export const serverEnv = {
   nextPublicAppUrl: readUrlEnv(process.env.NEXT_PUBLIC_APP_URL),
@@ -63,16 +109,21 @@ export const serverEnv = {
   inngestEventKey: readEnv(process.env.INNGEST_EVENT_KEY),
   inngestSigningKey: readEnv(process.env.INNGEST_SIGNING_KEY),
   inngestAppId: readEnv(process.env.INNGEST_APP_ID) ?? "fortexa",
-  openrouterApiKey: readEnv(process.env.OPENROUTER_API_KEY),
-  openrouterModel:
-    readEnv(process.env.OPENROUTER_MODEL) ??
-    "inclusionai/ling-2.6-flash:free",
-  openrouterFallbackModel: readEnv(process.env.OPENROUTER_FALLBACK_MODEL),
-  openrouterBaseUrl:
-    readEnv(process.env.OPENROUTER_BASE_URL) ??
-    "https://openrouter.ai/api/v1",
-  openrouterTimeoutMs:
-    readPositiveIntEnv(process.env.OPENROUTER_TIMEOUT_MS) ?? 30_000,
+  digitalOceanGradientModelAccessKey,
+  digitalOceanGradientApiKey:
+    digitalOceanGradientModelAccessKey ??
+    digitalOceanGradientLegacyApiKey ??
+    digitalOceanAccountToken,
+  digitalOceanToken: digitalOceanAccountToken,
+  digitalOceanGradientCredentialCandidates: buildDigitalOceanCredentialCandidates(),
+  digitalOceanGradientModel:
+    readEnv(process.env.DIGITALOCEAN_GRADIENT_MODEL) ??
+    DEFAULT_DIGITALOCEAN_GRADIENT_MODEL,
+  digitalOceanGradientBaseUrl:
+    normalizeBaseUrlEnv(process.env.DIGITALOCEAN_GRADIENT_BASE_URL) ??
+    DEFAULT_DIGITALOCEAN_GRADIENT_BASE_URL,
+  digitalOceanGradientTimeoutMs:
+    readPositiveIntEnv(process.env.DIGITALOCEAN_GRADIENT_TIMEOUT_MS) ?? 30_000,
   fortexaReportsBucket:
     readEnv(process.env.FORTEXA_REPORTS_BUCKET) ?? "fortexa-reports",
   fortexaScanImportsBucket:
@@ -119,8 +170,8 @@ export function getMissingEnvVars() {
     missing.push("INNGEST_SIGNING_KEY");
   }
 
-  if (!serverEnv.openrouterApiKey) {
-    missing.push("OPENROUTER_API_KEY");
+  if (serverEnv.digitalOceanGradientCredentialCandidates.length === 0) {
+    missing.push("DIGITALOCEAN_GRADIENT_MODEL_ACCESS_KEY");
   }
 
   return missing;

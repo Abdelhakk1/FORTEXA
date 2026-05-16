@@ -1,11 +1,11 @@
 # FORTEXA MVP Operations Flow
 
-FORTEXA is a Next.js + Supabase vulnerability-operations MVP for ATM, GAB, branch, and edge environments. This phase keeps the current app architecture and design language intact while making the product more credible for real operators: deterministic lifecycle tracking, delta-aware Nessus imports, assignable remediation work, and persisted OpenRouter-backed playbooks with trust metadata.
+FORTEXA is a Next.js + Supabase vulnerability-operations MVP for GAB/ATM environments. This phase keeps the current app architecture and design language intact while making the product more credible for real operators: deterministic lifecycle tracking, delta-aware Nessus imports, assignable remediation work, business-aware CIDT prioritization, and persisted DigitalOcean Gradient-backed playbooks with trust metadata.
 
 ## Canonical Importer
 
 - Active MVP scan importer: `Nessus (.nessus)`
-- Disabled in the UI for now: `OpenVAS`, `Nmap`, `Qualys`
+- Additional scanner formats stay off the operator UI until they are production-ready
 - Reason: the current schema and workflow are already aligned with Nessus-style findings, CVE linkage, and remediation operations
 
 ## How Assets Enter The System
@@ -25,7 +25,7 @@ All three paths write into the same `assets` table and use deterministic matchin
 5. `ip_address`
 6. `domain/url`
 
-If a match is found, the asset is updated. Otherwise a new asset is created with a generated code such as `ATM-001` or `SRV-001`.
+If a match is found, the asset is updated. Otherwise a new GAB asset is created with a generated code such as `ATM-001`.
 
 ### Deterministic Asset Inference
 
@@ -37,14 +37,9 @@ FORTEXA now stores lightweight deterministic inference in `assets.metadata.infer
 - `reasons`
 - `inferredFromImportId` when the inference came from scan ingestion
 
-Current inferred roles include:
-
-- `atm_controller`
-- `branch_router`
-- `vendor_managed_server`
-- `workstation`
-- `support_terminal`
-- `unknown`
+Current Fortexa scope treats imported and manually created assets as GAB/ATM assets.
+Deterministic inference is used only to enrich that GAB context; it does not create
+servers, third-party systems, or a general application catalog.
 
 This inference improves prioritization context and AI enrichment prompts, but it is not the source of truth for asset identity.
 
@@ -176,11 +171,11 @@ Notes:
 
 Sample file:
 
-- [`fixtures/sample-assets.csv`](/Users/abdelhak/Documents/PFE/FORTEXA/fixtures/sample-assets.csv)
+- [`fixtures/sample-assets.csv`](fixtures/sample-assets.csv)
 
 ## AI Enrichment Flow
 
-AI is assistive and async-first. Deterministic import persists the baseline records first. OpenRouter never blocks import success.
+AI is assistive and async-first. Deterministic import persists the baseline records first. DigitalOcean Gradient AI never blocks import success.
 
 ### Persisted AI Layers
 
@@ -191,9 +186,9 @@ FORTEXA now keeps AI responsibilities split:
 - `asset_vulnerability_enrichments`
   - operator-facing, context-aware playbooks for a specific asset-vulnerability instance
 
-### OpenRouter Contract
+### DigitalOcean Gradient AI Contract
 
-FORTEXA sends structured enrichment requests through OpenRouter using `inclusionai/ling-2.6-flash:free` by default, overridable with `OPENROUTER_MODEL`.
+FORTEXA sends structured enrichment requests through DigitalOcean Gradient Serverless Inference using `openai-gpt-oss-20b` by default, overridable with `DIGITALOCEAN_GRADIENT_MODEL`. The integration tries `DIGITALOCEAN_GRADIENT_MODEL_ACCESS_KEY` first and uses `DIGITALOCEAN_TOKEN` only as a fallback when the model access key is not authorized for the requested serverless model. If a configured primary model fails, Fortexa can try the lower-risk serverless fallback chain `openai-gpt-oss-120b`, `openai-gpt-oss-20b`, then `minimax-m2.5` while still surfacing real provider failures when all attempts fail.
 
 Structured AI output is validated before persistence.
 
@@ -250,7 +245,7 @@ Persisted enrichment metadata now includes:
 ### Failure Behavior
 
 - malformed AI JSON is rejected and stored as `failed`
-- OpenRouter downtime or missing `OPENROUTER_API_KEY` does not break imports
+- DigitalOcean Gradient downtime or missing `DIGITALOCEAN_GRADIENT_MODEL_ACCESS_KEY` does not break imports
 - pages render deterministic facts even when enrichment is absent
 - failed enrichments store error state and remain retryable
 
@@ -285,11 +280,11 @@ Real empty states are shown when enrichment or citations are missing. There is n
 
 ## Dev Fixtures
 
-- Nessus baseline: [`fixtures/sample-nessus-import.nessus`](/Users/abdelhak/Documents/PFE/FORTEXA/fixtures/sample-nessus-import.nessus)
-- Nessus delta follow-up: [`fixtures/sample-nessus-delta-followup.nessus`](/Users/abdelhak/Documents/PFE/FORTEXA/fixtures/sample-nessus-delta-followup.nessus)
-- Asset CSV: [`fixtures/sample-assets.csv`](/Users/abdelhak/Documents/PFE/FORTEXA/fixtures/sample-assets.csv)
-- Valid CVE enrichment payload: [`fixtures/sample-cve-enrichment-response.json`](/Users/abdelhak/Documents/PFE/FORTEXA/fixtures/sample-cve-enrichment-response.json)
-- Malformed CVE enrichment payload: [`fixtures/malformed-cve-enrichment-response.json`](/Users/abdelhak/Documents/PFE/FORTEXA/fixtures/malformed-cve-enrichment-response.json)
+- Nessus baseline: [`fixtures/sample-nessus-import.nessus`](fixtures/sample-nessus-import.nessus)
+- Nessus delta follow-up: [`fixtures/sample-nessus-delta-followup.nessus`](fixtures/sample-nessus-delta-followup.nessus)
+- Asset CSV: [`fixtures/sample-assets.csv`](fixtures/sample-assets.csv)
+- Valid CVE enrichment payload: [`fixtures/sample-cve-enrichment-response.json`](fixtures/sample-cve-enrichment-response.json)
+- Malformed CVE enrichment payload: [`fixtures/malformed-cve-enrichment-response.json`](fixtures/malformed-cve-enrichment-response.json)
 
 ## Local Verification
 
@@ -297,11 +292,11 @@ Real empty states are shown when enrichment or citations are missing. There is n
 2. Set the AI provider env vars when you want enrichment enabled:
 
 ```bash
-OPENROUTER_API_KEY=__CHANGE_ME__
-OPENROUTER_MODEL=inclusionai/ling-2.6-flash:free
-OPENROUTER_FALLBACK_MODEL=
-OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
-OPENROUTER_TIMEOUT_MS=30000
+DIGITALOCEAN_GRADIENT_MODEL_ACCESS_KEY=__CHANGE_ME__
+DIGITALOCEAN_TOKEN=
+DIGITALOCEAN_GRADIENT_MODEL=openai-gpt-oss-20b
+DIGITALOCEAN_GRADIENT_BASE_URL=https://inference.do-ai.run/v1
+DIGITALOCEAN_GRADIENT_TIMEOUT_MS=30000
 ```
 
 3. Apply the latest DB migration before runtime verification.
@@ -321,12 +316,12 @@ npm run smoke:dark-mode
    - open `/assets`
    - create an asset with the inline form
 6. Verify CSV asset import:
-   - import [`fixtures/sample-assets.csv`](/Users/abdelhak/Documents/PFE/FORTEXA/fixtures/sample-assets.csv) on `/assets`
+   - import [`fixtures/sample-assets.csv`](fixtures/sample-assets.csv) on `/assets`
 7. Verify Nessus baseline import:
    - open `/scan-import`
-   - upload [`fixtures/sample-nessus-import.nessus`](/Users/abdelhak/Documents/PFE/FORTEXA/fixtures/sample-nessus-import.nessus)
+   - upload [`fixtures/sample-nessus-import.nessus`](fixtures/sample-nessus-import.nessus)
 8. Verify delta behavior:
-   - upload [`fixtures/sample-nessus-delta-followup.nessus`](/Users/abdelhak/Documents/PFE/FORTEXA/fixtures/sample-nessus-delta-followup.nessus)
+   - upload [`fixtures/sample-nessus-delta-followup.nessus`](fixtures/sample-nessus-delta-followup.nessus)
    - confirm the import detail page shows new, fixed, reopened, unchanged, and matched-asset counters where applicable
    - optionally re-import the baseline file to exercise a reopened path for findings that were fixed by the follow-up
 9. Verify operator detail:
@@ -339,7 +334,7 @@ npm run smoke:dark-mode
    - change status, progress, due date, and notes from `/remediation`
 11. Verify AI retry and failure tolerance:
    - use `Retry AI` on an asset-vulnerability detail page
-   - remove `OPENROUTER_API_KEY` locally and confirm the page still renders while enrichment fails cleanly
+   - remove `DIGITALOCEAN_GRADIENT_MODEL_ACCESS_KEY` locally and confirm the page still renders while enrichment fails cleanly
    - validate the schema helpers against both the valid and malformed fixture payloads
 12. Check downstream pages:
    - `/dashboard`
@@ -352,8 +347,8 @@ npm run smoke:dark-mode
 
 This pass adds:
 
-- [`src/db/migrations/0005_ops_lifecycle_and_trust.sql`](/Users/abdelhak/Documents/PFE/FORTEXA/src/db/migrations/0005_ops_lifecycle_and_trust.sql)
-- [`src/db/migrations/0007_ai_enrichment_leases.sql`](/Users/abdelhak/Documents/PFE/FORTEXA/src/db/migrations/0007_ai_enrichment_leases.sql)
+- [`src/db/migrations/0005_ops_lifecycle_and_trust.sql`](src/db/migrations/0005_ops_lifecycle_and_trust.sql)
+- [`src/db/migrations/0007_ai_enrichment_leases.sql`](src/db/migrations/0007_ai_enrichment_leases.sql)
 
 It introduces:
 

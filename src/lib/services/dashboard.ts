@@ -13,16 +13,27 @@ import {
   toUiBusinessPriority,
   toUiCriticality,
   toUiExposureLevel,
+  toUiGabExposureType,
   toUiImportStatus,
   toUiScannerSource,
   toUiSeverity,
   toUiSlaStatus,
 } from "./serializers";
+import {
+  ATM_PAYMENT_SERVICES_LABEL,
+  applicationProfileExplanation,
+  calculateApplicationProfile,
+  calculateCidtSensitivity,
+  prioritySummaryFromFactors,
+  resolveGabCidtContext,
+  toSensitivityLevel,
+} from "./business-priority";
 
 export interface DashboardSummaryData {
   totals: {
     totalAssets: number;
     atmGabCount: number;
+    unclassifiedGabCount: number;
     totalVulnerabilities: number;
     criticalVulnerabilities: number;
     openAlerts: number;
@@ -54,6 +65,7 @@ export interface DashboardActivityData {
 type DashboardTotalsRow = {
   totalAssets: number;
   atmGabCount: number;
+  unclassifiedGabCount: number;
   totalVulnerabilities: number;
   criticalVulnerabilities: number;
   openAlerts: number;
@@ -73,6 +85,12 @@ type RiskyAssetRow = {
   branch: string | null;
   region: string | null;
   exposureLevel: string;
+  gabExposureType: string;
+  cidtConfidentiality: number | null;
+  cidtIntegrity: number | null;
+  cidtAvailability: number | null;
+  cidtTraceability: number | null;
+  cidtOverrideEnabled: boolean;
   status: string;
   criticality: string;
   vulnerabilityCount: number;
@@ -98,6 +116,7 @@ type PrioritizedVulnerabilityRow = {
   slaStatus: string;
   affectedProducts: string[] | null;
   riskScore: number;
+  priorityFactors: Record<string, unknown> | null;
 };
 
 type LatestAlertRow = {
@@ -143,6 +162,61 @@ function buildEmptyRemediationTrend(months: string[]) {
   }));
 }
 
+function buildDashboardAssetBusinessContext(asset: RiskyAssetRow) {
+  const assetCidt = {
+    confidentiality: asset.cidtConfidentiality,
+    integrity: asset.cidtIntegrity,
+    availability: asset.cidtAvailability,
+    traceability: asset.cidtTraceability,
+  };
+  const appCidt = {
+    confidentiality: 4,
+    integrity: 4,
+    availability: 4,
+    traceability: 4,
+  };
+  const appSensitivity = calculateCidtSensitivity(appCidt, 4);
+  const appProfile = calculateApplicationProfile({
+    isInternetExposed: false,
+    confidentiality: appCidt.confidentiality,
+    integrity: appCidt.integrity,
+  });
+  const resolvedAssetCidt = resolveGabCidtContext({
+    assetCidt,
+    cidtOverrideEnabled: asset.cidtOverrideEnabled,
+    gabExposureType: asset.gabExposureType,
+    applicationCidt: appCidt,
+  });
+
+  return {
+    gabExposureType: toUiGabExposureType(asset.gabExposureType),
+    gabExposureTypeDb: asset.gabExposureType,
+    cidt: {
+      confidentiality: resolvedAssetCidt.cidt.confidentiality,
+      integrity: resolvedAssetCidt.cidt.integrity,
+      availability: resolvedAssetCidt.cidt.availability,
+      traceability: resolvedAssetCidt.cidt.traceability,
+      sensitivity: resolvedAssetCidt.sensitivityLabel,
+      isComplete: resolvedAssetCidt.source !== "system_default",
+      source: resolvedAssetCidt.source,
+      sourceLabel: resolvedAssetCidt.sourceLabel,
+      templateKey: resolvedAssetCidt.templateKey,
+      isCustomOverride: resolvedAssetCidt.isCustomOverride,
+    },
+    businessApplication: {
+      label: ATM_PAYMENT_SERVICES_LABEL as typeof ATM_PAYMENT_SERVICES_LABEL,
+      cidt: {
+        ...appCidt,
+        sensitivity: toSensitivityLevel(appSensitivity),
+        isComplete: true,
+      },
+      profile: `Profile ${appProfile}` as const,
+      profileExplanation: applicationProfileExplanation(appProfile),
+      isInternetExposed: false,
+    },
+  };
+}
+
 function emptySummaryData(): DashboardSummaryData {
   const monthLabels = ["Nov", "Dec", "Jan", "Feb", "Mar", "Apr"];
 
@@ -150,6 +224,7 @@ function emptySummaryData(): DashboardSummaryData {
     totals: {
       totalAssets: 0,
       atmGabCount: 0,
+      unclassifiedGabCount: 0,
       totalVulnerabilities: 0,
       criticalVulnerabilities: 0,
       openAlerts: 0,
@@ -200,6 +275,7 @@ export async function getDashboardSummaryData(
           select
             (select count(*)::int from assets where organization_id = ${organizationId}) as "totalAssets",
             (select count(*)::int from assets where organization_id = ${organizationId} and type in ('atm', 'gab')) as "atmGabCount",
+            (select count(*)::int from assets where organization_id = ${organizationId} and type in ('atm', 'gab') and gab_exposure_type = 'unknown') as "unclassifiedGabCount",
             (select count(*)::int from asset_vulnerabilities where organization_id = ${organizationId} and status <> 'closed') as "totalVulnerabilities",
             (
               select count(*)::int
@@ -289,6 +365,12 @@ export async function getDashboardRiskData(
               a.branch as branch,
               a.region_id::text as region,
               a.exposure_level as "exposureLevel",
+              a.gab_exposure_type as "gabExposureType",
+              a.cidt_confidentiality as "cidtConfidentiality",
+              a.cidt_integrity as "cidtIntegrity",
+              a.cidt_availability as "cidtAvailability",
+              a.cidt_traceability as "cidtTraceability",
+              a.cidt_override_enabled as "cidtOverrideEnabled",
               a.status as status,
               a.criticality as criticality,
               count(av.id)::int as "vulnerabilityCount",
@@ -312,7 +394,23 @@ export async function getDashboardRiskData(
             left join cves c on c.id = av.cve_id
             where av.organization_id = ${organizationId} and av.status <> 'closed'
             group by a.id
-            order by max(av.risk_score) desc, a.asset_code asc
+            order by
+              min(case av.business_priority
+                when 'p1' then 1
+                when 'p2' then 2
+                when 'p3' then 3
+                when 'p4' then 4
+                else 5
+              end) asc,
+              max(case a.gab_exposure_type
+                when 'outdoor_public_street' then 4
+                when 'outdoor_commercial_center' then 3
+                when 'outdoor_agency' then 2
+                when 'indoor_agency' then 1
+                else 0
+              end) desc,
+              max(av.risk_score) desc,
+              a.asset_code asc
             limit 5
           `)
         ),
@@ -344,12 +442,31 @@ export async function getDashboardRiskData(
                 else 'on_track'
               end as "slaStatus",
               c.affected_products as "affectedProducts",
-              coalesce(max(av.risk_score), 0)::int as "riskScore"
+              coalesce(max(av.risk_score), 0)::int as "riskScore",
+              (array_agg(av.priority_factors order by av.risk_score desc))[1] as "priorityFactors"
             from asset_vulnerabilities av
             inner join cves c on c.id = av.cve_id
+            inner join assets a on a.id = av.asset_id
             where av.organization_id = ${organizationId} and av.status <> 'closed'
             group by c.id
-            order by max(av.risk_score) desc, c.cvss_score desc nulls last, c.cve_id asc
+            order by
+              min(case av.business_priority
+                when 'p1' then 1
+                when 'p2' then 2
+                when 'p3' then 3
+                when 'p4' then 4
+                else 5
+              end) asc,
+              max(case a.gab_exposure_type
+                when 'outdoor_public_street' then 4
+                when 'outdoor_commercial_center' then 3
+                when 'outdoor_agency' then 2
+                when 'indoor_agency' then 1
+                else 0
+              end) desc,
+              max(av.risk_score) desc,
+              c.cvss_score desc nulls last,
+              c.cve_id asc
             limit 5
           `)
         ),
@@ -369,6 +486,7 @@ export async function getDashboardRiskData(
           osVersion: "—",
           criticality: toUiCriticality(asset.criticality),
           exposureLevel: toUiExposureLevel(asset.exposureLevel),
+          ...buildDashboardAssetBusinessContext(asset),
           status: toUiAssetStatus(asset.status),
           owner: "Unassigned",
           lastScanDate: "—",
@@ -402,7 +520,18 @@ export async function getDashboardRiskData(
           primaryRemediation: "",
           compensatingControls: [],
           confidenceScore: 0,
-          contextReason: "",
+          contextReason: prioritySummaryFromFactors(row.priorityFactors),
+          priorityFactors:
+            row.priorityFactors && typeof row.priorityFactors === "object"
+              ? {
+                  summary: String(row.priorityFactors.summary ?? ""),
+                  businessImpact: String(row.priorityFactors.businessImpact ?? ""),
+                  remediationUrgency: String(row.priorityFactors.remediationUrgency ?? ""),
+                  missingContext: Array.isArray(row.priorityFactors.missingContext)
+                    ? row.priorityFactors.missingContext.map(String)
+                    : [],
+                }
+              : undefined,
           aiSummary: "",
           enrichmentStatus: "Pending",
           enrichmentError: "",

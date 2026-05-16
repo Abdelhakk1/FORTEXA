@@ -4,13 +4,14 @@ import { ensureSmokeUser } from "./smoke-auth.mjs";
 const baseUrl = process.env.FORTEXA_BASE_URL?.trim() || "http://localhost:3000";
 
 async function signIn(page, credentials) {
-  await page.goto(`${baseUrl}/login`, { waitUntil: "networkidle" });
-  await page.fill("#email", credentials.email);
-  await page.fill("#password", credentials.password);
-  await Promise.all([
-    page.waitForURL("**/dashboard", { timeout: 30_000 }),
-    page.locator("form").getByRole("button", { name: /^sign in$/i }).click(),
-  ]);
+  await page.goto(`${baseUrl}/login`, { waitUntil: "domcontentloaded" });
+  await page.waitForTimeout(1_000);
+  await page.locator("#email").waitFor({ state: "visible", timeout: 30_000 });
+  await page.click("#email");
+  await page.keyboard.type(credentials.email);
+  await page.click("#password");
+  await page.keyboard.type(credentials.password);
+  await page.locator("form").getByRole("button", { name: /^sign in$/i }).click();
   await page.getByRole("heading", { name: "Security Dashboard", exact: true }).waitFor({
     state: "visible",
     timeout: 30_000,
@@ -59,7 +60,7 @@ try {
   });
   const dashboardReloadMs = Date.now() - dashboardReloadStartedAt;
   const transitions = [
-    await assertClientNavigation(page, "Assets", "Asset Management"),
+    await assertClientNavigation(page, "Assets", "GAB Asset Management"),
     await assertClientNavigation(page, "Vulnerabilities", "Vulnerability Management"),
     await assertClientNavigation(page, "Remediation", "Remediation"),
     await assertClientNavigation(page, "Reports", "Reports"),

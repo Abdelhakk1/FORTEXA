@@ -307,7 +307,7 @@ export function LoginForm() {
           </h1>
           <p className="mt-1 text-sm leading-relaxed text-[#6B7280]">
             {mode === "signup"
-              ? "Start your ATM/GAB security onboarding."
+              ? "Start your GAB security onboarding."
               : "Access your Fortexa security workspace."}
           </p>
 
@@ -521,7 +521,7 @@ export function LoginForm() {
       <section className="relative hidden lg:block">
         <Image
           src="/pics/secondPic.png"
-          alt="Fortexa ATM/GAB security platform"
+          alt="Fortexa GAB security platform"
           fill
           className="object-cover object-center"
           priority

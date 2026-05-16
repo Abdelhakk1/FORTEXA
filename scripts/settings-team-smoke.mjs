@@ -21,14 +21,16 @@ function requiredEnv(name) {
 
 async function signIn(page, credentials) {
   await page.goto(`${baseUrl}/login`, { waitUntil: "domcontentloaded" });
+  await page.waitForTimeout(1_000);
   await page.click("#email");
   await page.keyboard.type(credentials.email);
   await page.click("#password");
   await page.keyboard.type(credentials.password);
-  await Promise.all([
-    page.waitForURL("**/dashboard", { timeout: 30_000 }),
-    page.locator("form").getByRole("button", { name: /^sign in$/i }).click(),
-  ]);
+  await page.locator("form").getByRole("button", { name: /^sign in$/i }).click();
+  await page.getByRole("heading", { name: "Security Dashboard", exact: true }).waitFor({
+    state: "visible",
+    timeout: 30_000,
+  });
 }
 
 async function findRoleId(sql, roleName) {
@@ -44,7 +46,7 @@ async function findRoleId(sql, roleName) {
 }
 
 async function createConfirmedUser(supabase, sql, roleName) {
-  const email = `fortexa.invite.${Date.now()}.${randomBytes(3).toString("hex")}@fortexa.local`;
+  const email = `fortexa.invite.${Date.now()}.${randomBytes(3).toString("hex")}@fortexa-bank.com`;
   const password = `Fortexa!${randomBytes(12).toString("hex")}A1`;
   const { data, error } = await supabase.auth.admin.createUser({
     email,
@@ -195,19 +197,27 @@ try {
     await invitedPage.goto(`${baseUrl}/invite/${inviteToken}`, {
       waitUntil: "domcontentloaded",
     });
+    await invitedPage.waitForURL("**/login?next=**", { timeout: 30_000 });
+    await invitedPage
+      .locator("form")
+      .getByRole("button", { name: /^sign in$/i })
+      .waitFor({ timeout: 30_000 });
     await invitedPage.click("#email");
     await invitedPage.keyboard.type(invitedUser.email);
     await invitedPage.click("#password");
     await invitedPage.keyboard.type(invitedUser.password);
-    await invitedPage
-      .locator("form")
-      .getByRole("button", { name: /^sign in$/i })
-      .click();
+    await Promise.all([
+      invitedPage.waitForURL(`**/invite/${inviteToken}`, { timeout: 30_000 }),
+      invitedPage
+        .locator("form")
+        .getByRole("button", { name: /^sign in$/i })
+        .click(),
+    ]);
     try {
       await invitedPage
         .getByRole("button", { name: /^accept invite$/i })
         .waitFor({ timeout: 30_000 });
-    } catch (error) {
+    } catch {
       const body = await invitedPage.locator("body").innerText().catch(() => "");
       throw new Error(
         `Invite accept button did not appear at ${invitedPage.url()}: ${body.slice(0, 500)}`

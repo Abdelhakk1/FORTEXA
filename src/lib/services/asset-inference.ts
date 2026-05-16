@@ -74,7 +74,7 @@ export function inferAssetContext(
     input.type === "gab" ||
     /(?:\batm\b|\bgab\b|\bxfs\b|diebold|wincor|ncr|hyosung)/.test(haystack)
   ) {
-    reasons.push("scanner evidence matches ATM/GAB device vocabulary");
+    reasons.push("scanner evidence matches GAB device vocabulary");
     return {
       role: "atm_controller",
       siteArchetype: "atm_lane",

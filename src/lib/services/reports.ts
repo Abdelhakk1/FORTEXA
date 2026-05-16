@@ -129,9 +129,10 @@ async function buildExecutiveExposureReport(
     throw new AppError("service_unavailable", "DATABASE_URL is missing.");
   }
 
-  const [totalsRows, siteRows, roleRows] = await Promise.all([
+  const [totalsRows, siteRows, roleRows, priorityRows] = await Promise.all([
     asRows<{
       totalAssets: number;
+      outdoorGabs: number;
       openVulnerabilities: number;
       criticalVulnerabilities: number;
       highVulnerabilities: number;
@@ -140,6 +141,7 @@ async function buildExecutiveExposureReport(
       await db.execute(sql`
         select
           (select count(*)::int from assets where organization_id = ${organizationId}) as "totalAssets",
+          (select count(*)::int from assets where organization_id = ${organizationId} and gab_exposure_type in ('outdoor_agency', 'outdoor_commercial_center', 'outdoor_public_street')) as "outdoorGabs",
           (select count(*)::int from asset_vulnerabilities where organization_id = ${organizationId} and status <> 'closed') as "openVulnerabilities",
           (
             select count(*)::int
@@ -180,9 +182,38 @@ async function buildExecutiveExposureReport(
       .groupBy(assets.type)
       .orderBy(sql`count(${assetVulnerabilities.id}) desc`)
       .limit(8),
+    asRows<{
+      assetCode: string;
+      assetName: string;
+      cveId: string;
+      severity: string;
+      businessPriority: string;
+      riskScore: number;
+      gabExposureType: string;
+      prioritySummary: string | null;
+    }>(
+      await db.execute(sql`
+        select
+          a.asset_code as "assetCode",
+          a.name as "assetName",
+          c.cve_id as "cveId",
+          c.severity as severity,
+          av.business_priority as "businessPriority",
+          av.risk_score as "riskScore",
+          a.gab_exposure_type as "gabExposureType",
+          av.priority_factors->>'summary' as "prioritySummary"
+        from asset_vulnerabilities av
+        inner join assets a on a.id = av.asset_id
+        inner join cves c on c.id = av.cve_id
+        where av.organization_id = ${organizationId} and av.status <> 'closed'
+        order by av.risk_score desc, av.business_priority asc, av.last_seen desc
+        limit 10
+      `)
+    ),
   ]);
   const totals = totalsRows[0] ?? {
     totalAssets: 0,
+    outdoorGabs: 0,
     openVulnerabilities: 0,
     criticalVulnerabilities: 0,
     highVulnerabilities: 0,
@@ -195,12 +226,26 @@ async function buildExecutiveExposureReport(
       rows: [
         {
           total_assets: totals.totalAssets,
+          outdoor_gabs: totals.outdoorGabs,
+          application_context: "ATM Payment Services",
           open_vulnerabilities: totals.openVulnerabilities,
           critical_vulnerabilities: totals.criticalVulnerabilities,
           high_vulnerabilities: totals.highVulnerabilities,
           overdue_remediation_tasks: totals.overdueTasks,
         },
       ],
+    },
+    {
+      title: "Top business-priority vulnerabilities",
+      rows: priorityRows.map((row) => ({
+        asset: `${row.assetCode} · ${row.assetName}`,
+        cve: row.cveId,
+        severity: row.severity,
+        business_priority: row.businessPriority,
+        business_score: row.riskScore,
+        gab_exposure: row.gabExposureType,
+        rationale: row.prioritySummary,
+      })),
     },
     {
       title: "Top affected sites / regions",
@@ -299,6 +344,8 @@ async function buildRemediationBacklogReport(
       cveCode: cves.cveId,
       assetCode: assets.assetCode,
       assetName: assets.name,
+      gabExposureType: assets.gabExposureType,
+      prioritySummary: sql<string | null>`${assetVulnerabilities.priorityFactors}->>'summary'`,
     })
     .from(remediationTasks)
     .leftJoin(profiles, eq(remediationTasks.assignedTo, profiles.id))
@@ -327,6 +374,9 @@ async function buildRemediationBacklogReport(
         sla_status: row.task.slaStatus,
         progress: row.task.progress,
         related_asset: row.assetCode ?? row.assetName ?? "N/A",
+        gab_exposure: row.gabExposureType ?? "unknown",
+        application_context: "ATM Payment Services",
+        priority_rationale: row.prioritySummary ?? null,
         related_cve: row.cveCode ?? "N/A",
       })),
     },

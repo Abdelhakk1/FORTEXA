@@ -23,6 +23,9 @@ import {
   resendTeamInviteAction,
   revokeTeamInviteAction,
   updateAiSettingsAction,
+  updateAtmPaymentServicesAction,
+  updateAssetClassificationRulesAction,
+  updateGabCidtTemplatesAction,
   updateNotificationSettingsAction,
   updateOperatingContextAction,
   updateOrganizationProfileAction,
@@ -40,6 +43,12 @@ import type {
   OrganizationSettingsRecord,
   SiteRecord,
 } from "@/lib/services/organizations";
+import {
+  applicationProfileExplanation,
+  calculateApplicationProfile,
+  calculateCidtSensitivity,
+  toSensitivityLevel,
+} from "@/lib/services/business-priority";
 
 type MemberRow = {
   id: string;
@@ -73,6 +82,34 @@ type AuditEventRow = {
   actorEmail: string | null;
 };
 
+type AtmPaymentServicesRow = {
+  cidtConfidentiality: number;
+  cidtIntegrity: number;
+  cidtAvailability: number;
+  cidtTraceability: number;
+  isInternetExposed: boolean;
+} | null;
+
+type GabCidtTemplateRow = {
+  id: string;
+  templateKey: string;
+  label: string;
+  cidtConfidentiality: number;
+  cidtIntegrity: number;
+  cidtAvailability: number;
+  cidtTraceability: number;
+  sensitivity: "S1" | "S2" | "S3" | "S4";
+};
+
+type AssetClassificationRuleRow = {
+  id: string;
+  name: string;
+  field: string;
+  matchValue: string;
+  gabExposureType: string;
+  enabled: boolean;
+};
+
 type SaveState = {
   section: string;
   status: "saved" | "error";
@@ -82,6 +119,13 @@ type SaveState = {
 const fieldClass =
   "h-10 border-[#E9ECEF] bg-[#F9FAFB] text-[#1A1A2E] dark:border-[#27272a] dark:bg-[#1a1a22] dark:text-[#fafafa]";
 const fieldHelpClass = "text-xs leading-5 text-[#6B7280] dark:text-[#94A3B8]";
+const gabExposureOptions = [
+  { value: "unknown", label: "Unknown" },
+  { value: "indoor_agency", label: "Indoor agency GAB" },
+  { value: "outdoor_agency", label: "Outdoor agency GAB" },
+  { value: "outdoor_commercial_center", label: "Outdoor commercial-center GAB" },
+  { value: "outdoor_public_street", label: "Outdoor public/street GAB" },
+];
 
 function SectionCard({
   icon: Icon,
@@ -234,6 +278,9 @@ export function SettingsPageClient({
   members,
   invites,
   auditEvents,
+  atmPaymentServices,
+  gabCidtTemplates,
+  assetClassificationRules,
   canManageSettings,
   canManageTeam,
   canViewAudit,
@@ -246,6 +293,9 @@ export function SettingsPageClient({
   members: MemberRow[];
   invites: InviteRow[];
   auditEvents: AuditEventRow[];
+  atmPaymentServices: AtmPaymentServicesRow;
+  gabCidtTemplates: GabCidtTemplateRow[];
+  assetClassificationRules: AssetClassificationRuleRow[];
   canManageSettings: boolean;
   canManageTeam: boolean;
   canViewAudit: boolean;
@@ -283,6 +333,33 @@ export function SettingsPageClient({
     mediumDays: settings.slaMediumDays,
     lowDays: settings.slaLowDays,
   });
+  const [atmPaymentServicesContext, setAtmPaymentServicesContext] = useState({
+    cidtConfidentiality: atmPaymentServices?.cidtConfidentiality ?? 4,
+    cidtIntegrity: atmPaymentServices?.cidtIntegrity ?? 4,
+    cidtAvailability: atmPaymentServices?.cidtAvailability ?? 4,
+    cidtTraceability: atmPaymentServices?.cidtTraceability ?? 4,
+    isInternetExposed: atmPaymentServices?.isInternetExposed ?? false,
+  });
+  const [gabTemplates, setGabTemplates] = useState(
+    gabCidtTemplates.map((template) => ({
+      templateKey: template.templateKey,
+      label: template.label,
+      cidtConfidentiality: template.cidtConfidentiality,
+      cidtIntegrity: template.cidtIntegrity,
+      cidtAvailability: template.cidtAvailability,
+      cidtTraceability: template.cidtTraceability,
+    }))
+  );
+  const [classificationRules, setClassificationRules] = useState(
+    assetClassificationRules.map((rule) => ({
+      id: rule.id,
+      name: rule.name,
+      field: rule.field,
+      matchValue: rule.matchValue,
+      gabExposureType: rule.gabExposureType,
+      enabled: rule.enabled,
+    }))
+  );
   const [ai, setAi] = useState({
     enabled: settings.aiEnabled,
     consentAccepted: settings.aiConsentAccepted,
@@ -302,6 +379,45 @@ export function SettingsPageClient({
   const knownMemberIdsRef = useRef(new Set(members.map((member) => member.id)));
 
   const siteRows = useMemo(() => sites.slice(0, 6), [sites]);
+  const atmPaymentServicesProfile = useMemo(() => {
+    const sensitivity = calculateCidtSensitivity(
+      {
+        confidentiality: atmPaymentServicesContext.cidtConfidentiality,
+        integrity: atmPaymentServicesContext.cidtIntegrity,
+        availability: atmPaymentServicesContext.cidtAvailability,
+        traceability: atmPaymentServicesContext.cidtTraceability,
+      },
+      4
+    );
+    const profile = calculateApplicationProfile({
+      isInternetExposed: atmPaymentServicesContext.isInternetExposed,
+      confidentiality: atmPaymentServicesContext.cidtConfidentiality,
+      integrity: atmPaymentServicesContext.cidtIntegrity,
+    });
+
+    return {
+      sensitivity: toSensitivityLevel(sensitivity),
+      profile,
+      explanation: applicationProfileExplanation(profile),
+    };
+  }, [atmPaymentServicesContext]);
+  const gabTemplateProfiles = useMemo(
+    () =>
+      gabTemplates.map((template) => {
+        const sensitivity = calculateCidtSensitivity({
+          confidentiality: template.cidtConfidentiality,
+          integrity: template.cidtIntegrity,
+          availability: template.cidtAvailability,
+          traceability: template.cidtTraceability,
+        });
+
+        return {
+          ...template,
+          sensitivity: toSensitivityLevel(sensitivity),
+        };
+      }),
+    [gabTemplates]
+  );
   const readOnlyNotice = canManageSettings
     ? null
     : "Your role can view these settings, but only an owner or administrator can change them.";
@@ -431,7 +547,7 @@ export function SettingsPageClient({
     <div>
       <PageHeader
         title="Settings"
-        description="Persisted operating settings for ATM/GAB vulnerability operations"
+        description="Persisted operating settings for GAB vulnerability operations"
       />
 
       <StatusNotice state={saveState} />
@@ -479,7 +595,7 @@ export function SettingsPageClient({
                   className={fieldClass}
                 />
                 <p className={fieldHelpClass}>
-                  The company or ATM/GAB operations team that owns this workspace.
+                  The company or GAB operations team that owns this workspace.
                 </p>
               </div>
               <div className="grid gap-2">
@@ -497,7 +613,7 @@ export function SettingsPageClient({
                   }
                   className={`${fieldClass} rounded-md px-3 text-sm`}
                 >
-                  <option value="atm_operator">ATM/GAB operator</option>
+                  <option value="atm_operator">GAB operator</option>
                   <option value="bank_security">Bank security team</option>
                   <option value="managed_security_provider">Managed security provider</option>
                   <option value="internal_security">Internal security team</option>
@@ -506,7 +622,7 @@ export function SettingsPageClient({
                   <option value="other">Other</option>
                 </select>
                 <p className={fieldHelpClass}>
-                  Pick the closest ATM/GAB operating model.
+                  Pick the closest GAB operating model.
                 </p>
               </div>
             </div>
@@ -517,7 +633,7 @@ export function SettingsPageClient({
                   id="default-region"
                   name="defaultRegion"
                   disabled={!canManageSettings}
-                  placeholder="Example: Algiers ATM/GAB operations"
+                  placeholder="Example: Algiers GAB operations"
                   value={profile.defaultRegion}
                   onChange={(event) =>
                     setProfile((current) => ({
@@ -528,7 +644,7 @@ export function SettingsPageClient({
                   className={fieldClass}
                 />
                 <p className={fieldHelpClass}>
-                  Default ATM/GAB area for reports and new records.
+                  Default GAB area for reports and new records.
                 </p>
               </div>
               <div className="grid gap-2">
@@ -578,7 +694,7 @@ export function SettingsPageClient({
         <SectionCard
           icon={ShieldCheck}
           title="Operating Context"
-          description="Fortexa keeps scanner findings tied to ATM/GAB fleet operations."
+          description="Fortexa keeps scanner findings tied to GAB fleet operations."
         >
           <form
             className="space-y-3"
@@ -590,7 +706,7 @@ export function SettingsPageClient({
             }}
           >
             {[
-              ["atmGabFleet", "ATM/GAB fleet"],
+              ["atmGabFleet", "GAB fleet"],
               ["vendorManagedSystems", "Vendor-managed systems"],
             ].map(([key, label]) => (
               <div
@@ -616,9 +732,344 @@ export function SettingsPageClient({
         </SectionCard>
 
         <SectionCard
+          icon={ShieldCheck}
+          title="ATM Payment Services CIDT"
+          description="Business sensitivity used to rank vulnerabilities on GABs supporting ATM Payment Services."
+        >
+          <form
+            className="space-y-4"
+            onSubmit={(event) => {
+              event.preventDefault();
+              runAction("ATM Payment Services CIDT", () =>
+                updateAtmPaymentServicesAction(atmPaymentServicesContext)
+              );
+            }}
+          >
+            <div className="rounded-xl border border-[#E9ECEF] bg-[#F9FAFB] p-4 dark:border-[#27272a] dark:bg-[#1a1a22]">
+              <div className="grid gap-2 text-sm text-[#6B7280] dark:text-[#94A3B8] sm:grid-cols-2">
+                <p>
+                  Application:{" "}
+                  <span className="font-medium text-[#1A1A2E] dark:text-[#fafafa]">
+                    ATM Payment Services
+                  </span>
+                </p>
+                <p>
+                  Sensitivity:{" "}
+                  <span className="font-medium text-[#1A1A2E] dark:text-[#fafafa]">
+                    {atmPaymentServicesProfile.sensitivity}
+                  </span>
+                </p>
+                <p>
+                  ATM Payment Services Profile:{" "}
+                  <span className="font-medium text-[#1A1A2E] dark:text-[#fafafa]">
+                    Profile {atmPaymentServicesProfile.profile}
+                  </span>
+                </p>
+                <p className="sm:col-span-2">
+                  {atmPaymentServicesProfile.explanation}
+                </p>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+              {[
+                ["cidtConfidentiality", "Confidentiality"],
+                ["cidtIntegrity", "Integrity"],
+                ["cidtAvailability", "Availability"],
+                ["cidtTraceability", "Traceability"],
+              ].map(([key, label]) => (
+                <div key={key} className="grid gap-2">
+                  <Label htmlFor={`atm-payment-${key}`}>{label}</Label>
+                  <select
+                    id={`atm-payment-${key}`}
+                    disabled={!canManageSettings}
+                    value={
+                      atmPaymentServicesContext[
+                        key as keyof Omit<
+                          typeof atmPaymentServicesContext,
+                          "isInternetExposed"
+                        >
+                      ]
+                    }
+                    onChange={(event) =>
+                      setAtmPaymentServicesContext((current) => ({
+                        ...current,
+                        [key]: Number(event.target.value),
+                      }))
+                    }
+                    className={`${fieldClass} rounded-md px-3 text-sm`}
+                  >
+                    {[1, 2, 3, 4].map((value) => (
+                      <option key={value} value={value}>
+                        {value}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ))}
+            </div>
+            <div className="flex items-center justify-between rounded-xl border border-[#E9ECEF] bg-[#F9FAFB] px-4 py-3 dark:border-[#27272a] dark:bg-[#1a1a22]">
+              <div>
+                <p className="text-sm font-medium text-[#1A1A2E] dark:text-[#fafafa]">
+                  Application exposed to internet
+                </p>
+                <p className="text-xs text-[#6B7280] dark:text-[#94A3B8]">
+                  When enabled, the ATM Payment Services Profile becomes Profile 4.
+                </p>
+              </div>
+              <Switch
+                disabled={!canManageSettings}
+                checked={atmPaymentServicesContext.isInternetExposed}
+                onCheckedChange={(checked) =>
+                  setAtmPaymentServicesContext((current) => ({
+                    ...current,
+                    isInternetExposed: checked,
+                  }))
+                }
+              />
+            </div>
+            {canManageSettings ? (
+              <SaveButton pending={isPending}>Save ATM Payment Services</SaveButton>
+            ) : null}
+          </form>
+        </SectionCard>
+
+        <SectionCard
+          icon={ShieldCheck}
+          title="GAB CIDT Templates"
+          description="Fleet defaults used when a GAB does not need a custom CIDT override."
+        >
+          <form
+            className="space-y-4"
+            onSubmit={(event) => {
+              event.preventDefault();
+              runAction("GAB CIDT templates", () =>
+                updateGabCidtTemplatesAction({ templates: gabTemplates })
+              );
+            }}
+          >
+            <div className="space-y-3">
+              {gabTemplateProfiles.map((template, templateIndex) => (
+                <div
+                  key={template.templateKey}
+                  className="rounded-xl border border-[#E9ECEF] bg-[#F9FAFB] p-4 dark:border-[#27272a] dark:bg-[#1a1a22]"
+                >
+                  <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <p className="text-sm font-semibold text-[#1A1A2E] dark:text-[#fafafa]">
+                        {template.label}
+                      </p>
+                      <p className={fieldHelpClass}>
+                        Sensitivity {template.sensitivity} from C
+                        {template.cidtConfidentiality} I{template.cidtIntegrity} D
+                        {template.cidtAvailability} T{template.cidtTraceability}
+                      </p>
+                    </div>
+                    <span className="rounded-full border border-[#BFDBFE] bg-[#EFF6FF] px-2.5 py-1 text-xs font-semibold text-[#1E3A8A] dark:border-[#1d4ed8]/60 dark:bg-[#0A1A2D] dark:text-[#BFDBFE]">
+                      {template.sensitivity}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                    {[
+                      ["cidtConfidentiality", "C"],
+                      ["cidtIntegrity", "I"],
+                      ["cidtAvailability", "D"],
+                      ["cidtTraceability", "T"],
+                    ].map(([key, label]) => (
+                      <label
+                        key={key}
+                        className="grid gap-1 text-xs font-medium text-[#6B7280] dark:text-[#94A3B8]"
+                      >
+                        {label}
+                        <select
+                          disabled={!canManageSettings}
+                          value={
+                            template[
+                              key as keyof Pick<
+                                typeof template,
+                                | "cidtConfidentiality"
+                                | "cidtIntegrity"
+                                | "cidtAvailability"
+                                | "cidtTraceability"
+                              >
+                            ]
+                          }
+                          onChange={(event) =>
+                            setGabTemplates((current) =>
+                              current.map((row, index) =>
+                                index === templateIndex
+                                  ? { ...row, [key]: Number(event.target.value) }
+                                  : row
+                              )
+                            )
+                          }
+                          className={`${fieldClass} rounded-md px-3 text-sm`}
+                        >
+                          {[1, 2, 3, 4].map((value) => (
+                            <option key={value} value={value}>
+                              {label}
+                              {value}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+            {canManageSettings ? (
+              <SaveButton pending={isPending}>Save templates</SaveButton>
+            ) : null}
+          </form>
+        </SectionCard>
+
+        <SectionCard
           icon={MapPin}
-          title="ATM/GAB Coverage Areas"
-          description="Create the default ATM/GAB fleet area used by reports and remediation context."
+          title="Asset Classification Rules"
+          description="Classify newly imported GABs from simple hostname or location patterns."
+        >
+          <form
+            className="space-y-4"
+            onSubmit={(event) => {
+              event.preventDefault();
+              runAction("Asset classification rules", () =>
+                updateAssetClassificationRulesAction({
+                  rules: classificationRules.map((rule) => ({
+                    name: rule.name,
+                    field: rule.field,
+                    matchValue: rule.matchValue,
+                    gabExposureType: rule.gabExposureType,
+                    enabled: rule.enabled,
+                  })),
+                })
+              );
+            }}
+          >
+            <div className="space-y-3">
+              {classificationRules.length === 0 ? (
+                <p className="rounded-xl border border-dashed border-[#D1D5DB] bg-[#F9FAFB] px-4 py-3 text-sm text-[#6B7280] dark:border-[#3a3a42] dark:bg-[#1a1a22] dark:text-[#94A3B8]">
+                  No rules yet. Imports will keep new GABs as Unknown until you classify them.
+                </p>
+              ) : null}
+              {classificationRules.map((rule, index) => (
+                <div
+                  key={rule.id ?? index}
+                  className="grid gap-3 rounded-xl border border-[#E9ECEF] bg-[#F9FAFB] p-3 dark:border-[#27272a] dark:bg-[#1a1a22] lg:grid-cols-[1fr_130px_1fr_220px_auto]"
+                >
+                  <Input
+                    disabled={!canManageSettings}
+                    value={rule.name}
+                    onChange={(event) =>
+                      setClassificationRules((current) =>
+                        current.map((row, rowIndex) =>
+                          rowIndex === index ? { ...row, name: event.target.value } : row
+                        )
+                      )
+                    }
+                    placeholder="Rule name"
+                    className={fieldClass}
+                  />
+                  <select
+                    disabled={!canManageSettings}
+                    value={rule.field}
+                    onChange={(event) =>
+                      setClassificationRules((current) =>
+                        current.map((row, rowIndex) =>
+                          rowIndex === index ? { ...row, field: event.target.value } : row
+                        )
+                      )
+                    }
+                    className={`${fieldClass} rounded-md px-3 text-sm`}
+                  >
+                    <option value="hostname">Hostname</option>
+                    <option value="name">Name</option>
+                    <option value="asset_code">Asset code</option>
+                    <option value="branch">Branch</option>
+                    <option value="location">Location</option>
+                  </select>
+                  <Input
+                    disabled={!canManageSettings}
+                    value={rule.matchValue}
+                    onChange={(event) =>
+                      setClassificationRules((current) =>
+                        current.map((row, rowIndex) =>
+                          rowIndex === index
+                            ? { ...row, matchValue: event.target.value }
+                            : row
+                        )
+                      )
+                    }
+                    placeholder="Contains text"
+                    className={fieldClass}
+                  />
+                  <select
+                    disabled={!canManageSettings}
+                    value={rule.gabExposureType}
+                    onChange={(event) =>
+                      setClassificationRules((current) =>
+                        current.map((row, rowIndex) =>
+                          rowIndex === index
+                            ? { ...row, gabExposureType: event.target.value }
+                            : row
+                        )
+                      )
+                    }
+                    className={`${fieldClass} rounded-md px-3 text-sm`}
+                  >
+                    {gabExposureOptions.map((option) => (
+                      <option key={`${rule.id}-${option.value}`} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    disabled={!canManageSettings}
+                    onClick={() =>
+                      setClassificationRules((current) =>
+                        current.filter((_, rowIndex) => rowIndex !== index)
+                      )
+                    }
+                    className="h-10 text-[#6B7280] hover:bg-red-50 hover:text-red-600 dark:text-[#94A3B8] dark:hover:bg-red-500/10 dark:hover:text-red-300"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
+              ))}
+            </div>
+            {canManageSettings ? (
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() =>
+                    setClassificationRules((current) => [
+                      ...current,
+                      {
+                        id: `draft-${current.length + 1}`,
+                        name: "Hostname contains OUT",
+                        field: "hostname",
+                        matchValue: "OUT",
+                        gabExposureType: "outdoor_agency",
+                        enabled: true,
+                      },
+                    ])
+                  }
+                  className="border-[#E9ECEF] bg-white text-[#1A1A2E] dark:border-[#27272a] dark:bg-[#141419] dark:text-[#fafafa]"
+                >
+                  Add rule
+                </Button>
+                <SaveButton pending={isPending}>Save rules</SaveButton>
+              </div>
+            ) : null}
+          </form>
+        </SectionCard>
+
+        <SectionCard
+          icon={MapPin}
+          title="GAB Coverage Areas"
+          description="Create the default fleet area used by reports and remediation context."
         >
           <form
             className="space-y-4"
@@ -633,7 +1084,7 @@ export function SettingsPageClient({
                 <Input
                   id="site-name"
                   disabled={!canManageSettings}
-                  placeholder="Example: Algiers ATM/GAB fleet"
+                  placeholder="Example: Algiers GAB fleet"
                   value={site.name}
                   onChange={(event) =>
                     setSite((current) => ({ ...current, name: event.target.value }))
@@ -641,7 +1092,7 @@ export function SettingsPageClient({
                   className={fieldClass}
                 />
                 <p className={fieldHelpClass}>
-                  A city, operating zone, or fleet group used by your ATM/GAB team.
+                  A city, operating zone, or fleet group used by your GAB team.
                 </p>
               </div>
               <div className="grid gap-2">
@@ -675,8 +1126,8 @@ export function SettingsPageClient({
                   }
                   className={`${fieldClass} rounded-md px-3 text-sm`}
                 >
-                  <option value="atm_fleet">ATM/GAB fleet</option>
-                  <option value="regional_group">ATM/GAB area group</option>
+                  <option value="atm_fleet">GAB fleet</option>
+                  <option value="regional_group">GAB area group</option>
                 </select>
                 <p className={fieldHelpClass}>
                   Use fleet for one managed group, or area group for a wider area.
@@ -934,34 +1385,18 @@ export function SettingsPageClient({
           title="Import / Scanner Settings"
           description="Nessus is the active Fortexa MVP scanner path."
         >
-          <div className="grid gap-3">
-            {[
-              ["Nessus", "Active", true],
-              ["OpenVAS", "Not implemented", false],
-              ["Nmap", "Not implemented", false],
-              ["Qualys", "Not implemented", false],
-            ].map(([name, status, active]) => (
-              <div
-                key={name as string}
-                className="flex items-center justify-between rounded-xl border border-[#E9ECEF] bg-[#F9FAFB] px-4 py-3 dark:border-[#27272a] dark:bg-[#1a1a22]"
-              >
-                <div>
-                  <p className="text-sm font-medium text-[#1A1A2E] dark:text-[#fafafa]">
-                    {name}
-                  </p>
-                  <p className="text-xs text-[#6B7280] dark:text-[#94A3B8]">
-                    {status}
-                  </p>
-                </div>
-                {active ? (
-                  <CheckCircle2 className="h-5 w-5 text-emerald-500" />
-                ) : (
-                  <Button disabled variant="outline" size="sm">
-                    Disabled
-                  </Button>
-                )}
+          <div className="rounded-xl border border-[#E9ECEF] bg-[#F9FAFB] px-4 py-3 dark:border-[#27272a] dark:bg-[#1a1a22]">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-medium text-[#1A1A2E] dark:text-[#fafafa]">
+                  Nessus
+                </p>
+                <p className="text-xs text-[#6B7280] dark:text-[#94A3B8]">
+                  Active canonical importer for this MVP. Additional scanner formats are planned after the Nessus path stays production-stable.
+                </p>
               </div>
-            ))}
+              <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-500" />
+            </div>
           </div>
         </SectionCard>
 

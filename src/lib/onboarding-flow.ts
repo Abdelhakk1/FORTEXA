@@ -25,7 +25,7 @@ export const TEAM_TYPE_VALUES = [
 ] as const;
 
 export const TEAM_TYPE_OPTIONS = [
-  { value: "atm_operator", label: "ATM/GAB operator" },
+  { value: "atm_operator", label: "GAB operator" },
   { value: "bank_security", label: "Bank security team" },
   { value: "managed_security_provider", label: "Managed security provider" },
   { value: "internal_security", label: "Internal security team" },
@@ -34,26 +34,19 @@ export const TEAM_TYPE_OPTIONS = [
 
 export const PRIMARY_ENVIRONMENT_VALUES = [
   "atm_gab_devices",
-  "atm_gab_branch_systems",
-  "back_office_servers_endpoints",
-  "mixed_infrastructure",
-  "customer_managed_environments",
-  "other",
+  "indoor_outdoor_gab_fleet",
+  "branch_and_public_gab_fleet",
+  "other_atm_gab_scope",
 ] as const;
 
 export const PRIMARY_ENVIRONMENT_OPTIONS = [
-  { value: "atm_gab_devices", label: "ATM/GAB devices" },
-  { value: "atm_gab_branch_systems", label: "ATM/GAB + branch systems" },
+  { value: "atm_gab_devices", label: "GAB fleet" },
+  { value: "indoor_outdoor_gab_fleet", label: "Indoor and outdoor GAB fleet" },
   {
-    value: "back_office_servers_endpoints",
-    label: "Back-office servers and endpoints",
+    value: "branch_and_public_gab_fleet",
+    label: "Branch and public/street GAB fleet",
   },
-  { value: "mixed_infrastructure", label: "Mixed infrastructure" },
-  {
-    value: "customer_managed_environments",
-    label: "Customer-managed environments",
-  },
-  { value: "other", label: "Other" },
+  { value: "other_atm_gab_scope", label: "Other GAB scope" },
 ] as const;
 
 export const REMEDIATION_OWNERSHIP_VALUES = [
