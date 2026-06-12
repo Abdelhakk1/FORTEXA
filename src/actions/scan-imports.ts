@@ -1,11 +1,13 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { logAuditEvent } from "@/lib/audit";
 import { requireActiveOrganization, requirePermission } from "@/lib/auth";
 import { err, ok, toActionResult, type ActionResult } from "@/lib/errors";
 import { measureServerTiming } from "@/lib/observability/timing";
 import { processScanImport } from "@/lib/services/ingestion";
+import { processPendingAssetVulnerabilityEnrichments } from "@/lib/services/asset-vulnerability-enrichment";
 import { createScanImportRecord } from "@/lib/services/scan-imports";
 import {
   getFortexaStorageBuckets,
@@ -45,6 +47,55 @@ function isConnectionFailure(error: unknown): boolean {
     message.toLowerCase().includes("connect timeout") ||
     isConnectionFailure(maybeError.cause)
   );
+}
+
+function wakePostImportEnrichmentProcessor(input: {
+  organizationId: string;
+  scanImportId: string;
+}) {
+  try {
+    after(async () => {
+      try {
+        const result = await processPendingAssetVulnerabilityEnrichments({
+          organizationId: input.organizationId,
+          limit: 2,
+          triggerSource: "automatic_import",
+        });
+
+        console.info("[scan-import-action]", {
+          action: "scan_import.ai_processor_wake_finished",
+          organizationId: input.organizationId,
+          scanImportId: input.scanImportId,
+          ok: result.ok,
+          code: result.ok ? "ok" : result.code,
+          result: result.ok ? result.data : null,
+          message: result.ok ? null : result.message.slice(0, 240),
+        });
+      } catch (error) {
+        console.error("[scan-import-action]", {
+          action: "scan_import.ai_processor_wake_failed",
+          organizationId: input.organizationId,
+          scanImportId: input.scanImportId,
+          errorName: error instanceof Error ? error.name : "unknown",
+          message:
+            error instanceof Error
+              ? error.message.slice(0, 240)
+              : "Unknown post-import AI processor wake failure",
+        });
+      }
+    });
+  } catch (error) {
+    console.error("[scan-import-action]", {
+      action: "scan_import.ai_processor_wake_schedule_failed",
+      organizationId: input.organizationId,
+      scanImportId: input.scanImportId,
+      errorName: error instanceof Error ? error.name : "unknown",
+      message:
+        error instanceof Error
+          ? error.message.slice(0, 240)
+          : "Unknown post-import AI processor scheduling failure",
+    });
+  }
 }
 
 export async function createScanImportAction(
@@ -171,6 +222,11 @@ export async function createScanImportAction(
               "The Nessus file could not be processed. Review the failed import row for details."
           );
         }
+
+        wakePostImportEnrichmentProcessor({
+          organizationId: activeOrganization.organization.id,
+          scanImportId: record.id,
+        });
 
         return ok({ id: record.id, status: processed.status });
       } catch (error) {

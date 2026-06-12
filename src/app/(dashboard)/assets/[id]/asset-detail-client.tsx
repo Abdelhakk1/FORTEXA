@@ -18,10 +18,8 @@ import { useTheme } from "@/components/theme-provider";
 
 const gabExposureOptions = [
   { value: "unknown", label: "Unknown" },
-  { value: "indoor_agency", label: "Indoor agency GAB" },
-  { value: "outdoor_agency", label: "Outdoor agency GAB" },
-  { value: "outdoor_commercial_center", label: "Outdoor commercial-center GAB" },
-  { value: "outdoor_public_street", label: "Outdoor public/street GAB" },
+  { value: "indoor_agency", label: "Indoor GAB" },
+  { value: "outdoor_agency", label: "Outdoor GAB" },
 ] as const;
 
 type GabExposureFormValue = (typeof gabExposureOptions)[number]["value"];
@@ -50,6 +48,7 @@ export default function AssetDetailClient({ data }: { data: AssetDetailData }) {
   const [isSavingContext, startSavingContext] = useTransition();
   const [contextForm, setContextForm] = useState<{
     gabExposureType: GabExposureFormValue;
+    cidtTemplateKey: string;
     cidtOverrideEnabled: boolean;
     cidtConfidentiality: string;
     cidtIntegrity: string;
@@ -61,6 +60,7 @@ export default function AssetDetailClient({ data }: { data: AssetDetailData }) {
     )
       ? (asset.gabExposureTypeDb as GabExposureFormValue)
       : "unknown",
+    cidtTemplateKey: asset.cidt.templateKey ?? "",
     cidtOverrideEnabled: Boolean(asset.cidt.isCustomOverride),
     cidtConfidentiality: asset.cidt.confidentiality?.toString() ?? "missing",
     cidtIntegrity: asset.cidt.integrity?.toString() ?? "missing",
@@ -95,6 +95,7 @@ export default function AssetDetailClient({ data }: { data: AssetDetailData }) {
       const result = await updateAssetBusinessContextAction({
         assetCode: asset.id,
         gabExposureType: contextForm.gabExposureType,
+        cidtTemplateKey: contextForm.cidtTemplateKey || undefined,
         cidtOverrideEnabled: contextForm.cidtOverrideEnabled,
         cidtConfidentiality: cidtFormValue(contextForm.cidtConfidentiality),
         cidtIntegrity: cidtFormValue(contextForm.cidtIntegrity),
@@ -147,7 +148,7 @@ export default function AssetDetailClient({ data }: { data: AssetDetailData }) {
           </div>
           <div className="text-center">
             <div className="flex justify-center"><PriorityBadge priority={asset.contextualPriority} /></div>
-            <p className="text-xs text-[#6B7280] dark:text-[#94A3B8] mt-1">Business Priority</p>
+            <p className="text-xs text-[#6B7280] dark:text-[#94A3B8] mt-1">Fix Bucket</p>
           </div>
           <div className="text-center">
             <div className="flex justify-center mb-1"><StatusBadge status={asset.status} /></div>
@@ -172,7 +173,7 @@ export default function AssetDetailClient({ data }: { data: AssetDetailData }) {
                 { icon: Server, label: "Type", value: asset.type },
                 { icon: Monitor, label: "Model", value: asset.model },
                 { icon: Server, label: "Manufacturer", value: asset.manufacturer },
-                { icon: MapPin, label: "Branch", value: asset.branch },
+                { icon: MapPin, label: "Coverage area", value: asset.branch },
                 { icon: MapPin, label: "Region", value: asset.region },
                 { icon: MapPin, label: "Location", value: asset.location },
                 { icon: Wifi, label: "IP Address", value: asset.ipAddress },
@@ -301,6 +302,7 @@ export default function AssetDetailClient({ data }: { data: AssetDetailData }) {
               ) : null}
               {[
                 ["GAB Exposure", asset.gabExposureType],
+                ["CIDT Template", asset.cidt.templateLabel ?? asset.cidt.sourceLabel ?? "Default for exposure"],
                 ["GAB CIDT", `C${asset.cidt.confidentiality ?? "?"} I${asset.cidt.integrity ?? "?"} D${asset.cidt.availability ?? "?"} T${asset.cidt.traceability ?? "?"}`],
                 ["GAB Sensitivity", asset.cidt.sensitivity],
                 ["CIDT Source", asset.cidt.sourceLabel ?? "Inherited from ATM Payment Services"],
@@ -340,11 +342,33 @@ export default function AssetDetailClient({ data }: { data: AssetDetailData }) {
                       ))}
                     </select>
                   </label>
+                  <label className="grid gap-1 text-xs font-medium text-[#6B7280] dark:text-[#94A3B8]">
+                    CIDT template
+                    <select
+                      value={contextForm.cidtTemplateKey || "default"}
+                      onChange={(event) =>
+                        setContextForm((current) => ({
+                          ...current,
+                          cidtTemplateKey:
+                            event.target.value === "default" ? "" : event.target.value,
+                        }))
+                      }
+                      className="h-9 rounded-md border border-[#E9ECEF] bg-white px-2 text-sm text-[#1A1A2E] dark:border-[#27272a] dark:bg-[#141419] dark:text-[#fafafa]"
+                    >
+                      <option value="default">Default for exposure</option>
+                      {data.gabCidtTemplates.map((template) => (
+                        <option key={template.templateKey} value={template.templateKey}>
+                          {template.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
                   <p className="rounded-md border border-[#BFDBFE] bg-[#EFF6FF] px-3 py-2 text-xs leading-5 text-[#1E3A8A] dark:border-[#1d4ed8]/60 dark:bg-[#0A1A2D] dark:text-[#BFDBFE]">
                     Resolved CIDT is currently C{asset.cidt.confidentiality} I
                     {asset.cidt.integrity} D{asset.cidt.availability} T
                     {asset.cidt.traceability} from{" "}
-                    {asset.cidt.sourceLabel ?? "ATM Payment Services"}.
+                    {asset.cidt.templateLabel ?? asset.cidt.sourceLabel ?? "ATM Payment Services"}.
+                    Exposure remains a separate indoor/outdoor factor.
                   </p>
                   <button
                     type="button"
@@ -356,9 +380,8 @@ export default function AssetDetailClient({ data }: { data: AssetDetailData }) {
                   {showAdvancedOverride ? (
                     <div className="space-y-3 rounded-lg border border-[#E9ECEF] bg-white p-3 dark:border-[#27272a] dark:bg-[#141419]">
                       <p className="text-xs leading-5 text-[#6B7280] dark:text-[#94A3B8]">
-                        This GAB inherits CIDT from its exposure template. Set a custom
-                        override only if this specific GAB differs from the rest of the
-                        fleet.
+                        Templates set business-impact CIDT. Set a custom override only
+                        if this specific GAB differs from the selected template.
                       </p>
                       <label className="flex items-center justify-between gap-3 text-xs font-medium text-[#6B7280] dark:text-[#94A3B8]">
                         Enable custom CIDT override

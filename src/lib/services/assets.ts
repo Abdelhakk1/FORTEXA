@@ -52,7 +52,10 @@ import {
   applicationProfileExplanation,
   calculateApplicationProfile,
   calculateCidtSensitivity,
+  gabCidtTemplateKeyForExposure,
   hasCompleteCidt,
+  normalizeGabExposureClass,
+  normalizeGabExposureType,
   resolveGabCidtContext,
   toSensitivityLevel,
   type GabCidtTemplate,
@@ -112,6 +115,7 @@ export function buildAssetBusinessContext(
   const resolvedAssetCidt = resolveGabCidtContext({
     assetCidt,
     cidtOverrideEnabled: asset.cidtOverrideEnabled,
+    cidtTemplateKey: asset.cidtTemplateKey,
     gabExposureType: asset.gabExposureType,
     templates,
     applicationCidt: appCidt,
@@ -126,6 +130,8 @@ export function buildAssetBusinessContext(
   return {
     gabExposureType: toUiGabExposureType(asset.gabExposureType),
     gabExposureTypeDb: asset.gabExposureType,
+    cidtTemplateKey:
+      asset.cidtTemplateKey ?? gabCidtTemplateKeyForExposure(asset.gabExposureType),
     cidt: {
       ...resolvedAssetCidt.cidt,
       sensitivity: resolvedAssetCidt.sensitivityLabel,
@@ -133,6 +139,7 @@ export function buildAssetBusinessContext(
       source: resolvedAssetCidt.source,
       sourceLabel: resolvedAssetCidt.sourceLabel,
       templateKey: resolvedAssetCidt.templateKey,
+      templateLabel: resolvedAssetCidt.templateLabel,
       isCustomOverride: resolvedAssetCidt.isCustomOverride,
     },
     businessApplication: {
@@ -173,6 +180,8 @@ export interface AssetsPageData {
   gabCidtTemplates: Array<{
     templateKey: string;
     label: string;
+    description: string | null;
+    isDefault: boolean;
     cidtConfidentiality: number;
     cidtIntegrity: number;
     cidtAvailability: number;
@@ -197,6 +206,7 @@ export interface AssetsPageData {
 
 export interface AssetDetailData {
   asset: AssetListItem;
+  gabCidtTemplates: AssetsPageData["gabCidtTemplates"];
   riskTrend: Array<{ month: string; value: number }>;
   vulnerabilities: Vulnerability[];
   remediationTasks: RemediationTask[];
@@ -232,7 +242,9 @@ export const createAssetSchema = z.object({
       "outdoor_commercial_center",
       "outdoor_public_street",
     ])
+    .transform((value) => normalizeGabExposureType(value))
     .default("unknown"),
+  cidtTemplateKey: z.string().trim().max(120).optional().or(z.literal("")),
   cidtConfidentiality: cidtInputSchema,
   cidtIntegrity: cidtInputSchema,
   cidtAvailability: cidtInputSchema,
@@ -257,7 +269,8 @@ export const updateAssetBusinessContextSchema = z
       "outdoor_agency",
       "outdoor_commercial_center",
       "outdoor_public_street",
-    ]),
+    ]).transform((value) => normalizeGabExposureType(value)),
+    cidtTemplateKey: z.string().trim().max(120).optional().or(z.literal("")),
   })
   .superRefine((value, context) => {
     if (!value.cidtOverrideEnabled) {
@@ -326,12 +339,25 @@ function buildAssetWhere(organizationId: string, filters: AssetListFilters) {
   }
 
   if (filters.gabExposureType && filters.gabExposureType !== "all") {
-    clauses.push(
-      eq(
-        assets.gabExposureType,
-        filters.gabExposureType as typeof assets.$inferSelect.gabExposureType
-      )
-    );
+    const exposureClass = normalizeGabExposureClass(filters.gabExposureType);
+    if (exposureClass === "outdoor") {
+      clauses.push(
+        inArray(assets.gabExposureType, [
+          "outdoor_agency",
+          "outdoor_commercial_center",
+          "outdoor_public_street",
+        ])
+      );
+    } else {
+      clauses.push(
+        eq(
+          assets.gabExposureType,
+          normalizeGabExposureType(
+            filters.gabExposureType
+          ) as typeof assets.$inferSelect.gabExposureType
+        )
+      );
+    }
   }
 
   return clauses.length ? and(...clauses) : undefined;
@@ -546,6 +572,8 @@ export async function listAssets(
           gabCidtTemplates: templateDisplayRows(templates).map((template) => ({
             templateKey: template.templateKey,
             label: template.label,
+            description: template.description,
+            isDefault: template.isDefault,
             cidtConfidentiality: template.cidtConfidentiality,
             cidtIntegrity: template.cidtIntegrity,
             cidtAvailability: template.cidtAvailability,
@@ -654,6 +682,7 @@ export async function createAsset(
       osVersion: parsed.data.osVersion || null,
       businessApplicationId: application.id,
       gabExposureType: parsed.data.gabExposureType,
+      cidtTemplateKey: parsed.data.cidtTemplateKey || null,
       cidtOverrideEnabled: hasCustomCidt,
       cidtConfidentiality: hasCustomCidt
         ? parsed.data.cidtConfidentiality ?? null
@@ -704,6 +733,7 @@ export async function updateAssetBusinessContext(
     .set({
       businessApplicationId: application.id,
       gabExposureType: parsed.gabExposureType,
+      cidtTemplateKey: parsed.cidtTemplateKey || null,
       cidtOverrideEnabled: customOverride,
       cidtConfidentiality: customOverride
         ? parsed.cidtConfidentiality ?? null
@@ -788,6 +818,17 @@ export async function getAssetDetail(
   }));
 
   const [mappedAsset] = mapAssets([assetRow], templates, statsRows);
+  const gabCidtTemplateRows = templateDisplayRows(templates).map((template) => ({
+    templateKey: template.templateKey,
+    label: template.label,
+    description: template.description,
+    isDefault: template.isDefault,
+    cidtConfidentiality: template.cidtConfidentiality,
+    cidtIntegrity: template.cidtIntegrity,
+    cidtAvailability: template.cidtAvailability,
+    cidtTraceability: template.cidtTraceability,
+    sensitivity: template.sensitivity,
+  }));
 
   const vulnerabilities = vulnerabilityRows.map(({ av, cve }) => ({
     id: av.id,
@@ -970,6 +1011,7 @@ export async function getAssetDetail(
 
   return {
     asset: mappedAsset,
+    gabCidtTemplates: gabCidtTemplateRows,
     riskTrend,
     vulnerabilities,
     remediationTasks: remediationTasksData,

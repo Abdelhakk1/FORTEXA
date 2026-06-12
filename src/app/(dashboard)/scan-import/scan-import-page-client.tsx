@@ -18,6 +18,28 @@ interface ScanImportPageClientProps {
   data: ScanImportPageData;
 }
 
+function aiEnrichmentLabel(
+  ai: ScanImportPageData["imports"]["items"][number]["aiEnrichment"]
+) {
+  if (!ai.enabled && ai.total > 0) {
+    return "AI off";
+  }
+
+  if (ai.total === 0) {
+    return ai.enabled ? "None queued" : "AI off";
+  }
+
+  if (ai.failed > 0) {
+    return `${ai.completed}/${ai.total} done, ${ai.failed} failed`;
+  }
+
+  if (ai.processing > 0 || ai.queued > 0 || ai.missing > 0) {
+    return `${ai.completed}/${ai.total} done`;
+  }
+
+  return `${ai.completed}/${ai.total} done`;
+}
+
 export function ScanImportPageClient({ data }: ScanImportPageClientProps) {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -228,10 +250,10 @@ export function ScanImportPageClient({ data }: ScanImportPageClientProps) {
           </div>
         </div>
         <div className="overflow-x-auto w-full">
-          <table className="w-full text-sm min-w-[1100px]">
+          <table className="w-full text-sm min-w-[1200px]">
             <thead>
               <tr className="dark-table-head border-b border-[#F3F4F6] dark:border-[#27272a]">
-                {["Import Name", "Scanner", "Date", "Imported By", "Assets", "Findings", "CVEs", "Status", "Actions"].map((heading) => (
+                {["Import Name", "Scanner", "Date", "Imported By", "Assets", "Findings", "CVEs", "AI", "Status", "Actions"].map((heading) => (
                   <th key={heading} className="text-left py-3 px-4 text-xs font-semibold text-[#6B7280] dark:text-[#94A3B8] uppercase tracking-wider whitespace-nowrap">{heading}</th>
                 ))}
               </tr>
@@ -249,6 +271,7 @@ export function ScanImportPageClient({ data }: ScanImportPageClientProps) {
                   <td className="py-3 px-4 text-center font-medium text-[#1A1A2E] dark:text-[#fafafa]">{scanImport.assetsFound}</td>
                   <td className="py-3 px-4 text-center font-medium text-[#1A1A2E] dark:text-[#fafafa]">{scanImport.findingsFound.toLocaleString()}</td>
                   <td className="py-3 px-4 text-center font-medium text-[#1A1A2E] dark:text-[#fafafa]">{scanImport.cvesLinked}</td>
+                  <td className="py-3 px-4 text-xs text-[#6B7280] dark:text-[#94A3B8] whitespace-nowrap">{aiEnrichmentLabel(scanImport.aiEnrichment)}</td>
                   <td className="py-3 px-4"><StatusBadge status={scanImport.status} /></td>
                   <td className="py-3 px-4">
                     <Link href={`/scan-import/${scanImport.id}`} prefetch={false}><Button variant="ghost" size="sm" className="h-9 w-9 p-0 cursor-pointer text-[#6B7280] dark:text-[#94A3B8] hover:text-[#0C5CAB] dark:hover:text-[#60A5FA] hover:bg-[#EFF6FF] dark:hover:bg-[#1a1a22]"><Eye className="h-4 w-4" /></Button></Link>

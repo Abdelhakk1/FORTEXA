@@ -61,7 +61,7 @@ export function normalizeBaseUrlEnv(value: string | undefined) {
 }
 
 export const defaultResendFromEmail = "Fortexa <onboarding@resend.dev>";
-export const DEFAULT_DIGITALOCEAN_GRADIENT_MODEL = "openai-gpt-oss-20b";
+export const DEFAULT_DIGITALOCEAN_GRADIENT_MODEL = "deepseek-4-flash";
 export const DEFAULT_DIGITALOCEAN_GRADIENT_BASE_URL =
   "https://inference.do-ai.run/v1";
 

@@ -8,7 +8,7 @@ import { PageHeader } from "@/components/shared/page-header";
 import { StatusBadge } from "@/components/shared/badges";
 import { EChart } from "@/components/shared/echart";
 import type { ScanImportDetailData } from "@/lib/services/scan-imports";
-import { CheckCircle2, XCircle, AlertTriangle, ArrowRight, Server, Bug, Link2, Download, FileText } from "lucide-react";
+import { CheckCircle2, XCircle, AlertTriangle, ArrowRight, Server, Bug, Link2, Download, FileText, Sparkles } from "lucide-react";
 
 export default function ImportDetailClient({
   data,
@@ -16,6 +16,7 @@ export default function ImportDetailClient({
   data: ScanImportDetailData;
 }) {
   const imp = data.scanImport;
+  const ai = data.aiEnrichment;
   const steps = data.steps;
   const reviewFindings = data.findings.slice(0, 5);
   const errorMessages =
@@ -71,6 +72,7 @@ export default function ImportDetailClient({
           { label: "Reopened", value: imp.reopenedFindings, icon: AlertTriangle, color: "text-orange-600 bg-orange-500/12" },
           { label: "Fixed", value: imp.fixedFindings, icon: CheckCircle2, color: "text-emerald-600 bg-emerald-500/12" },
           { label: "Unchanged", value: imp.unchangedFindings, icon: FileText, color: "text-[#1B4332] bg-[#1B4332]/12" },
+          { label: "AI Playbooks", value: ai.total > 0 ? `${ai.completed}/${ai.total}` : ai.enabled ? "0" : "Off", icon: Sparkles, color: ai.failed > 0 ? "text-amber-600 bg-amber-500/12" : "text-blue-600 bg-blue-50" },
           { label: "Low-Confidence", value: imp.lowConfidenceMatches, icon: AlertTriangle, color: imp.lowConfidenceMatches > 0 ? "text-amber-600 bg-amber-500/12" : "text-[#6B7280] dark:text-[#94A3B8] bg-[#F3F4F6] dark:bg-[#27272a]" },
           { label: "Errors", value: imp.errors, icon: XCircle, color: imp.errors > 0 ? "text-red-600 bg-red-500/12" : "text-[#6B7280] dark:text-[#94A3B8] bg-[#F3F4F6] dark:bg-[#27272a]" },
         ].map(card => (

@@ -20,17 +20,15 @@ export interface AssetInferenceInput {
 
 export interface AssetInferenceResult {
   role:
-    | "atm_controller"
-    | "branch_router"
-    | "vendor_managed_server"
-    | "workstation"
-    | "support_terminal"
+    | "gab_terminal"
+    | "gab_connectivity_component"
+    | "gab_maintenance_component"
+    | "gab_operator_console"
     | "unknown";
   siteArchetype:
-    | "atm_lane"
-    | "branch_edge"
-    | "vendor_support"
-    | "user_endpoint"
+    | "gab_area"
+    | "gab_connectivity"
+    | "gab_maintenance"
     | "unknown";
   confidence: number;
   reasons: string[];
@@ -76,8 +74,8 @@ export function inferAssetContext(
   ) {
     reasons.push("scanner evidence matches GAB device vocabulary");
     return {
-      role: "atm_controller",
-      siteArchetype: "atm_lane",
+      role: "gab_terminal",
+      siteArchetype: "gab_area",
       confidence: 92,
       reasons,
     };
@@ -89,10 +87,10 @@ export function inferAssetContext(
       haystack
     )
   ) {
-    reasons.push("device type and scanner strings match branch-edge network gear");
+    reasons.push("device type and scanner strings suggest GAB connectivity equipment");
     return {
-      role: "branch_router",
-      siteArchetype: "branch_edge",
+      role: "gab_connectivity_component",
+      siteArchetype: "gab_connectivity",
       confidence: 88,
       reasons,
     };
@@ -102,10 +100,10 @@ export function inferAssetContext(
     input.type === "server" &&
     /(?:vendor|support|managed|maintenance|middleware|monitoring)/.test(haystack)
   ) {
-    reasons.push("server strings suggest vendor-managed or support infrastructure");
+    reasons.push("scanner strings suggest a GAB maintenance service component");
     return {
-      role: "vendor_managed_server",
-      siteArchetype: "vendor_support",
+      role: "gab_maintenance_component",
+      siteArchetype: "gab_maintenance",
       confidence: 76,
       reasons,
     };
@@ -115,10 +113,10 @@ export function inferAssetContext(
     input.type === "workstation" ||
     /(?:desktop|workstation|laptop|windows 10|windows 11)/.test(haystack)
   ) {
-    reasons.push("host profile matches a user endpoint or operator workstation");
+    reasons.push("host profile matches a GAB operations console");
     return {
-      role: "workstation",
-      siteArchetype: "user_endpoint",
+      role: "gab_operator_console",
+      siteArchetype: "gab_maintenance",
       confidence: 74,
       reasons,
     };
@@ -127,8 +125,8 @@ export function inferAssetContext(
   if (/support|helpdesk|ops terminal|jumpbox|bastion/.test(haystack)) {
     reasons.push("naming suggests a support or maintenance terminal");
     return {
-      role: "support_terminal",
-      siteArchetype: "vendor_support",
+      role: "gab_maintenance_component",
+      siteArchetype: "gab_maintenance",
       confidence: 70,
       reasons,
     };

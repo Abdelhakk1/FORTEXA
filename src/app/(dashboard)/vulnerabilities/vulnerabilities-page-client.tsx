@@ -1,8 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { type ReactNode, useMemo, useState } from "react";
 import Link from "next/link";
-import { ArrowUpDown, Columns, Download, Eye } from "lucide-react";
+import { ArrowRight, ArrowUpDown, Columns, Download, Eye } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -20,9 +20,10 @@ import { EmptyState } from "@/components/shared/empty-state";
 import { PaginationControls } from "@/components/shared/pagination-controls";
 import { useTheme } from "@/components/theme-provider";
 import { downloadCsv } from "@/lib/download";
+import type { RemediationCampaign, Vulnerability } from "@/lib/types";
 import type { VulnerabilityOverviewData } from "@/lib/services/vulnerabilities";
 
-type ViewMode = "cve" | "asset";
+type ViewMode = "campaign" | "cve" | "asset";
 type SortDirection = "asc" | "desc";
 type CveSortKey = "recommendedFixOrder" | "cveId" | "severity" | "businessPriority" | "affectedAssetsCount" | "firstSeen" | "slaDue";
 type AssetSortKey = "name" | "maxSeverity" | "vulnerabilityCount" | "riskScore" | "lastScanDate";
@@ -30,6 +31,61 @@ type AssetSortKey = "name" | "maxSeverity" | "vulnerabilityCount" | "riskScore" 
 const PAGE_SIZE = 8;
 const severityRank = { CRITICAL: 4, HIGH: 3, MEDIUM: 2, LOW: 1, INFO: 0 };
 const priorityRank = { P1: 5, P2: 4, P3: 3, P4: 2, P5: 1 };
+const priorityLabels = {
+  P1: "Fix first",
+  P2: "Accelerated",
+  P3: "Planned",
+  P4: "Routine",
+  P5: "Routine",
+} as const;
+
+function isCampaignRow(
+  row: RemediationCampaign | Vulnerability
+): row is RemediationCampaign {
+  return "representativeVulnerabilityId" in row;
+}
+
+function slaDisplayRank(status: string) {
+  if (status === "Overdue") return -2;
+  if (status === "Due today") return -1;
+
+  const dueInMatch = status.match(/^Due in (\d+) days?$/);
+  if (dueInMatch?.[1]) {
+    return Number.parseInt(dueInMatch[1], 10);
+  }
+
+  if (status === "On Track") return 1_000;
+  if (status === "No SLA") return 1_001;
+  return 1_002;
+}
+
+function campaignDisplayTitle(title: string) {
+  return title.replace(/\s+remediation campaign$/i, "").trim();
+}
+
+function pluralize(value: number, singular: string) {
+  return `${value} ${singular}${value === 1 ? "" : "s"}`;
+}
+
+function CampaignMetricChip({
+  children,
+  emphasis = false,
+}: {
+  children: ReactNode;
+  emphasis?: boolean;
+}) {
+  return (
+    <span
+      className={`inline-flex min-h-6 items-center whitespace-nowrap rounded-full border px-2.5 py-1 text-xs font-semibold ${
+        emphasis
+          ? "border-[#BFDBFE] bg-[#EFF6FF] text-[#0C5CAB] dark:border-[#1d4ed8]/60 dark:bg-[#0A1A2D] dark:text-[#93C5FD]"
+          : "border-[#E9ECEF] bg-[#F9FAFB] text-[#1A1A2E] dark:border-[#27272a] dark:bg-[#111827] dark:text-[#E5E7EB]"
+      }`}
+    >
+      {children}
+    </span>
+  );
+}
 
 const defaultCveColumns = {
   severity: true,
@@ -59,6 +115,7 @@ export default function VulnerabilitiesPageClient({
 }) {
   const {
     assets,
+    remediationCampaigns,
     vulnerabilities,
     severityDistribution,
     topVulnerableModels,
@@ -70,7 +127,7 @@ export default function VulnerabilitiesPageClient({
   const [slaFilter, setSlaFilter] = useState("all");
   const [exposureFilter, setExposureFilter] = useState("all");
   const [assetStatusFilter, setAssetStatusFilter] = useState("all");
-  const [viewMode, setViewMode] = useState<ViewMode>("cve");
+  const [viewMode, setViewMode] = useState<ViewMode>("campaign");
   const [page, setPage] = useState(1);
   const [cveSort, setCveSort] = useState<{ key: CveSortKey; direction: SortDirection }>({
     key: "recommendedFixOrder",
@@ -89,6 +146,39 @@ export default function VulnerabilitiesPageClient({
   const bgCard = isDark ? "#141419" : "#FFFFFF";
   const textDark = isDark ? "#fafafa" : "#1A1A2E";
   const textLight = isDark ? "#94A3B8" : "#6B7280";
+  const slaFilterOptions = useMemo(
+    () =>
+      Array.from(
+        new Set([
+          ...remediationCampaigns.map((campaign) => campaign.slaStatus),
+          ...vulnerabilities.map((vulnerability) => vulnerability.slaStatus),
+        ])
+      )
+        .sort((left, right) => slaDisplayRank(left) - slaDisplayRank(right)),
+    [remediationCampaigns, vulnerabilities]
+  );
+
+  const filteredCampaigns = useMemo(() => {
+    return remediationCampaigns.filter((campaign) => {
+      if (
+        search &&
+        !campaign.title.toLowerCase().includes(search.toLowerCase()) &&
+        !campaign.groupedCvesText.toLowerCase().includes(search.toLowerCase()) &&
+        !campaign.affectedAssetCodes.join(" ").toLowerCase().includes(search.toLowerCase())
+      ) {
+        return false;
+      }
+
+      if (severityFilter !== "all" && campaign.severity !== severityFilter) return false;
+      if (priorityFilter !== "all" && campaign.businessPriority !== priorityFilter) return false;
+      if (kevFilter !== "all") {
+        if (kevFilter === "yes" && !campaign.hasCisaKevSource) return false;
+        if (kevFilter === "no" && campaign.hasCisaKevSource) return false;
+      }
+      if (slaFilter !== "all" && campaign.slaStatus !== slaFilter) return false;
+      return true;
+    });
+  }, [kevFilter, priorityFilter, remediationCampaigns, search, severityFilter, slaFilter]);
 
   const filteredCves = useMemo(() => {
     return vulnerabilities.filter((vulnerability) => {
@@ -103,8 +193,8 @@ export default function VulnerabilitiesPageClient({
       if (severityFilter !== "all" && vulnerability.severity !== severityFilter) return false;
       if (priorityFilter !== "all" && vulnerability.businessPriority !== priorityFilter) return false;
       if (kevFilter !== "all") {
-        if (kevFilter === "yes" && vulnerability.exploitMaturity !== "Active in Wild (KEV)") return false;
-        if (kevFilter === "no" && vulnerability.exploitMaturity === "Active in Wild (KEV)") return false;
+        if (kevFilter === "yes" && !vulnerability.hasCisaKevSource) return false;
+        if (kevFilter === "no" && vulnerability.hasCisaKevSource) return false;
       }
       if (slaFilter !== "all" && vulnerability.slaStatus !== slaFilter) return false;
       return true;
@@ -154,6 +244,29 @@ export default function VulnerabilitiesPageClient({
     });
   }, [filteredCves, cveSort]);
 
+  const sortedCampaigns = useMemo(() => {
+    return [...filteredCampaigns].sort((left, right) => {
+      const direction = cveSort.direction === "asc" ? 1 : -1;
+
+      switch (cveSort.key) {
+        case "recommendedFixOrder":
+          return ((left.recommendedFixOrder ?? 0) - (right.recommendedFixOrder ?? 0)) * direction;
+        case "cveId":
+          return left.title.localeCompare(right.title) * direction;
+        case "severity":
+          return (severityRank[left.severity] - severityRank[right.severity]) * direction;
+        case "businessPriority":
+          return (priorityRank[left.businessPriority] - priorityRank[right.businessPriority]) * direction;
+        case "affectedAssetsCount":
+          return (left.affectedAssetsCount - right.affectedAssetsCount) * direction;
+        case "firstSeen":
+          return (new Date(left.firstSeen).getTime() - new Date(right.firstSeen).getTime()) * direction;
+        case "slaDue":
+          return (new Date(left.slaDue).getTime() - new Date(right.slaDue).getTime()) * direction;
+      }
+    });
+  }, [filteredCampaigns, cveSort]);
+
   const sortedAssets = useMemo(() => {
     return [...filteredAssets].sort((left, right) => {
       const direction = assetSort.direction === "asc" ? 1 : -1;
@@ -173,10 +286,19 @@ export default function VulnerabilitiesPageClient({
     });
   }, [filteredAssets, assetSort]);
 
-  const totalPages = Math.max(1, Math.ceil((viewMode === "cve" ? sortedCves.length : sortedAssets.length) / PAGE_SIZE));
+  const activeQueueItems =
+    viewMode === "campaign"
+      ? sortedCampaigns.length
+      : viewMode === "cve"
+        ? sortedCves.length
+        : sortedAssets.length;
+  const totalPages = Math.max(1, Math.ceil(activeQueueItems / PAGE_SIZE));
   const currentPage = Math.min(page, totalPages);
+  const paginatedCampaigns = sortedCampaigns.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
   const paginatedCves = sortedCves.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
   const paginatedAssets = sortedAssets.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+  const paginatedQueueRows =
+    viewMode === "campaign" ? paginatedCampaigns : paginatedCves;
 
   const clearFilters = () => {
     setSearch("");
@@ -241,6 +363,25 @@ export default function VulnerabilitiesPageClient({
   };
 
   const exportCurrentView = () => {
+    if (viewMode === "campaign") {
+      downloadCsv({
+        filename: "fortexa-remediation-campaigns.csv",
+        columns: [
+          { key: "title", label: "Campaign" },
+          { key: "groupedCvesText", label: "CVEs" },
+          { key: "severity", label: "Highest Severity" },
+          { key: "businessPriority", label: "Fix Bucket" },
+          { key: "rankScore", label: "Rank Score" },
+          { key: "affectedAssetsCount", label: "GABs" },
+          { key: "exposureSummary", label: "Exposure Summary" },
+          { key: "campaignRationale", label: "Remediation Rationale" },
+          { key: "slaDue", label: "SLA Due" },
+        ],
+        rows: sortedCampaigns,
+      });
+      return;
+    }
+
     if (viewMode === "cve") {
       downloadCsv({
         filename: "fortexa-vulnerabilities-by-cve.csv",
@@ -248,9 +389,11 @@ export default function VulnerabilitiesPageClient({
           { key: "cveId", label: "CVE" },
           { key: "title", label: "Title" },
           { key: "severity", label: "Severity" },
-          { key: "businessPriority", label: "Business Priority" },
+          { key: "businessPriority", label: "Fix Bucket" },
           { key: "affectedAssetsCount", label: "Affected Assets" },
           { key: "exploitMaturity", label: "Exploit Maturity" },
+          { key: "epssScore", label: "EPSS Score" },
+          { key: "tieBreakReason", label: "Fix Order Rationale" },
           { key: "firstSeen", label: "First Seen" },
           { key: "slaDue", label: "SLA Due" },
         ],
@@ -265,7 +408,7 @@ export default function VulnerabilitiesPageClient({
         { key: "id", label: "Asset ID" },
         { key: "name", label: "Asset" },
         { key: "type", label: "Type" },
-        { key: "branch", label: "Branch" },
+        { key: "branch", label: "Coverage Area" },
         { key: "region", label: "Region" },
         { key: "gabExposureType", label: "GAB Exposure" },
         { key: "cidtSensitivity", label: "GAB Sensitivity" },
@@ -284,14 +427,14 @@ export default function VulnerabilitiesPageClient({
   const activeFilterCount = [
     severityFilter,
     priorityFilter,
-    viewMode === "cve" ? kevFilter : exposureFilter,
-    viewMode === "cve" ? slaFilter : assetStatusFilter,
+    viewMode === "asset" ? exposureFilter : kevFilter,
+    viewMode === "asset" ? assetStatusFilter : slaFilter,
   ].filter((value) => value !== "all").length + (search ? 1 : 0);
 
   const cveSortState = (key: CveSortKey) => cveSort.key === key ? cveSort.direction : undefined;
   const assetSortState = (key: AssetSortKey) => assetSort.key === key ? assetSort.direction : undefined;
   const isRecommendedFixOrder =
-    viewMode === "cve" &&
+    viewMode !== "asset" &&
     cveSort.key === "recommendedFixOrder" &&
     cveSort.direction === "desc";
 
@@ -303,7 +446,7 @@ export default function VulnerabilitiesPageClient({
     <button
       type="button"
       onClick={onClick}
-      className="inline-flex items-center gap-1 text-left"
+      className="inline-flex items-center gap-1 whitespace-nowrap text-left"
     >
       <span>{label}</span>
       <ArrowUpDown className={`h-3.5 w-3.5 ${sortState ? "text-[#0C5CAB] dark:text-[#60A5FA]" : "text-[#9CA3AF] dark:text-[#64748B]"}`} />
@@ -314,10 +457,21 @@ export default function VulnerabilitiesPageClient({
     <div>
       <PageHeader
         title="Vulnerability Management"
-        description={`${vulnerabilities.length} tracked asset-vulnerability records across your GAB fleet`}
+        description={`${remediationCampaigns.length} remediation campaigns from ${vulnerabilities.length} tracked asset-vulnerability records`}
         actions={
           <div className="flex flex-wrap gap-2">
             <div className="flex items-center overflow-hidden rounded-lg border border-[#E9ECEF] dark:border-[#27272a]">
+              <button
+                type="button"
+                aria-pressed={viewMode === "campaign"}
+                onClick={() => {
+                  setViewMode("campaign");
+                  setPage(1);
+                }}
+                className={`px-3 py-1.5 text-xs font-medium transition-colors ${viewMode === "campaign" ? "bg-[#0C5CAB] text-white dark:bg-[#3B82F6]" : "bg-[#F9FAFB] text-[#6B7280] hover:bg-[#EFF6FF] dark:bg-[#1a1a22] dark:text-[#94A3B8] dark:hover:bg-[#27272a]"}`}
+              >
+                By Campaign
+              </button>
               <button
                 type="button"
                 aria-pressed={viewMode === "cve"}
@@ -327,7 +481,7 @@ export default function VulnerabilitiesPageClient({
                 }}
                 className={`px-3 py-1.5 text-xs font-medium transition-colors ${viewMode === "cve" ? "bg-[#0C5CAB] text-white dark:bg-[#3B82F6]" : "bg-[#F9FAFB] text-[#6B7280] hover:bg-[#EFF6FF] dark:bg-[#1a1a22] dark:text-[#94A3B8] dark:hover:bg-[#27272a]"}`}
               >
-                By CVE
+                Individual CVEs
               </button>
               <button
                 type="button"
@@ -351,7 +505,13 @@ export default function VulnerabilitiesPageClient({
       <Card className="mb-5 border border-[#E9ECEF] bg-white p-4 dark:border-[#27272a] dark:bg-[#141419]">
         <div className="flex flex-wrap items-center gap-3">
           <SearchInput
-            placeholder={viewMode === "cve" ? "Search CVE, title..." : "Search asset, branch, model..."}
+            placeholder={
+              viewMode === "campaign"
+                ? "Search campaign, CVE, GAB..."
+                : viewMode === "cve"
+                  ? "Search CVE, title..."
+                  : "Search GAB, coverage area, model..."
+            }
             value={search}
             onChange={(value) => {
               setSearch(value);
@@ -381,15 +541,15 @@ export default function VulnerabilitiesPageClient({
               setPage(1);
             }}
           >
-            <SelectTrigger className="h-9 w-full cursor-pointer border-[#E9ECEF] bg-[#F9FAFB] text-[#6B7280] dark:border-[#27272a] dark:bg-[#1a1a22] dark:text-[#94A3B8] sm:w-[160px]"><SelectValue placeholder="Biz Priority" /></SelectTrigger>
+            <SelectTrigger className="h-9 w-full cursor-pointer border-[#E9ECEF] bg-[#F9FAFB] text-[#6B7280] dark:border-[#27272a] dark:bg-[#1a1a22] dark:text-[#94A3B8] sm:w-[170px]"><SelectValue placeholder="Fix bucket" /></SelectTrigger>
             <SelectContent className="border-[#E9ECEF] bg-white dark:border-[#27272a] dark:bg-[#141419]">
-              <SelectItem value="all" className="cursor-pointer">Biz Priority: All</SelectItem>
-              {["P1", "P2", "P3", "P4", "P5"].map((priority) => (
-                <SelectItem key={priority} value={priority} className="cursor-pointer">{priority}</SelectItem>
+              <SelectItem value="all" className="cursor-pointer">Fix bucket: All</SelectItem>
+              {(["P1", "P2", "P3", "P4"] as const).map((priority) => (
+                <SelectItem key={priority} value={priority} className="cursor-pointer">{priorityLabels[priority]}</SelectItem>
               ))}
             </SelectContent>
           </Select>
-          {viewMode === "cve" ? (
+          {viewMode !== "asset" ? (
             <>
               <Select
                 value={kevFilter}
@@ -415,7 +575,7 @@ export default function VulnerabilitiesPageClient({
                 <SelectTrigger className="h-9 w-full cursor-pointer border-[#E9ECEF] bg-[#F9FAFB] text-[#6B7280] dark:border-[#27272a] dark:bg-[#1a1a22] dark:text-[#94A3B8] sm:w-[150px]"><SelectValue placeholder="SLA Status" /></SelectTrigger>
                 <SelectContent className="border-[#E9ECEF] bg-white dark:border-[#27272a] dark:bg-[#141419]">
                   <SelectItem value="all" className="cursor-pointer">SLA Status: All</SelectItem>
-                  {["On Track", "At Risk", "Overdue"].map((status) => (
+                  {slaFilterOptions.map((status) => (
                     <SelectItem key={status} value={status} className="cursor-pointer">{status}</SelectItem>
                   ))}
                 </SelectContent>
@@ -433,7 +593,7 @@ export default function VulnerabilitiesPageClient({
                 <SelectTrigger className="h-9 w-full cursor-pointer border-[#E9ECEF] bg-[#F9FAFB] text-[#6B7280] dark:border-[#27272a] dark:bg-[#1a1a22] dark:text-[#94A3B8] sm:w-[220px]"><SelectValue placeholder="GAB Exposure" /></SelectTrigger>
                 <SelectContent className="border-[#E9ECEF] bg-white dark:border-[#27272a] dark:bg-[#141419]">
                   <SelectItem value="all" className="cursor-pointer">GAB Exposure: All</SelectItem>
-                  {["Unknown", "Indoor agency GAB", "Outdoor agency GAB", "Outdoor commercial-center GAB", "Outdoor public/street GAB"].map((exposure) => (
+                  {["Unknown", "Indoor GAB", "Outdoor GAB"].map((exposure) => (
                     <SelectItem key={exposure} value={exposure} className="cursor-pointer">{exposure}</SelectItem>
                   ))}
                 </SelectContent>
@@ -461,7 +621,11 @@ export default function VulnerabilitiesPageClient({
         </div>
         <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-[#F3F4F6] pt-3 text-xs text-[#6B7280] dark:border-[#27272a] dark:text-[#94A3B8]">
           <span>
-            {viewMode === "cve" ? filteredCves.length : filteredAssets.length} {viewMode === "cve" ? "records" : "assets"} in this view
+            {viewMode === "campaign"
+              ? filteredCampaigns.length
+              : viewMode === "cve"
+                ? filteredCves.length
+                : filteredAssets.length} {viewMode === "campaign" ? "campaigns" : viewMode === "cve" ? "records" : "assets"} in this view
           </span>
           <span>
             {isRecommendedFixOrder
@@ -486,10 +650,16 @@ export default function VulnerabilitiesPageClient({
         </Card>
       </div>
 
-      {(viewMode === "cve" ? filteredCves.length : filteredAssets.length) === 0 ? (
+      {activeQueueItems === 0 ? (
         <Card className="border border-[#E9ECEF] bg-white dark:border-[#27272a] dark:bg-[#141419]">
           <EmptyState
-            title={viewMode === "cve" ? "No vulnerabilities match these filters" : "No assets match these filters"}
+            title={
+              viewMode === "campaign"
+                ? "No remediation campaigns match these filters"
+                : viewMode === "cve"
+                  ? "No vulnerabilities match these filters"
+                  : "No assets match these filters"
+            }
             description="Clear the current filters or widen the search terms to get back to the active vulnerability view."
             actionLabel="Clear filters"
             onAction={clearFilters}
@@ -501,15 +671,15 @@ export default function VulnerabilitiesPageClient({
           <div className="flex items-center justify-between gap-3 border-b border-[#E9ECEF] px-5 py-4 dark:border-[#27272a]">
             <div className="flex items-center gap-3">
               <h3 className="text-sm font-semibold text-[#1A1A2E] dark:text-[#fafafa]">
-                {viewMode === "cve" ? "Active Vulnerabilities" : "Assets With Active Exposure"}
+                {viewMode === "campaign" ? "Remediation Campaign Queue" : viewMode === "cve" ? "Individual Vulnerability Records" : "Assets With Active Exposure"}
               </h3>
               <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-[#DBEAFE] px-1.5 text-[10px] font-bold text-[#0C5CAB] dark:bg-[#0A1A2D] dark:text-[#60A5FA]">
-                {viewMode === "cve" ? filteredCves.length : filteredAssets.length}
+                {viewMode === "campaign" ? filteredCampaigns.length : viewMode === "cve" ? filteredCves.length : filteredAssets.length}
               </span>
             </div>
-            {viewMode === "cve" ? (
+            {viewMode !== "asset" ? (
               <p className="hidden text-xs font-medium text-[#6B7280] dark:text-[#94A3B8] sm:block">
-                Fix #1 is the recommended first remediation
+                Fix #1 is the recommended first remediation {viewMode === "campaign" ? "campaign" : "record"}
               </p>
             ) : null}
             <DropdownMenu>
@@ -519,10 +689,10 @@ export default function VulnerabilitiesPageClient({
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-48 border-[#E9ECEF] bg-white dark:border-[#27272a] dark:bg-[#141419]">
-                {viewMode === "cve" ? (
+                {viewMode !== "asset" ? (
                   <>
                     <DropdownMenuCheckboxItem checked={visibleCveColumns.severity} onCheckedChange={(checked) => setVisibleCveColumns((current) => ({ ...current, severity: Boolean(checked) }))}>Severity</DropdownMenuCheckboxItem>
-                    <DropdownMenuCheckboxItem checked={visibleCveColumns.priority} onCheckedChange={(checked) => setVisibleCveColumns((current) => ({ ...current, priority: Boolean(checked) }))}>Business Priority</DropdownMenuCheckboxItem>
+                    <DropdownMenuCheckboxItem checked={visibleCveColumns.priority} onCheckedChange={(checked) => setVisibleCveColumns((current) => ({ ...current, priority: Boolean(checked) }))}>Fix bucket</DropdownMenuCheckboxItem>
                     <DropdownMenuCheckboxItem checked={visibleCveColumns.affectedAssetsCount} onCheckedChange={(checked) => setVisibleCveColumns((current) => ({ ...current, affectedAssetsCount: Boolean(checked) }))}>Affected Assets</DropdownMenuCheckboxItem>
                     <DropdownMenuCheckboxItem checked={visibleCveColumns.kev} onCheckedChange={(checked) => setVisibleCveColumns((current) => ({ ...current, kev: Boolean(checked) }))}>KEV</DropdownMenuCheckboxItem>
                     <DropdownMenuCheckboxItem checked={visibleCveColumns.firstSeen} onCheckedChange={(checked) => setVisibleCveColumns((current) => ({ ...current, firstSeen: Boolean(checked) }))}>First Seen</DropdownMenuCheckboxItem>
@@ -531,7 +701,7 @@ export default function VulnerabilitiesPageClient({
                 ) : (
                   <>
                     <DropdownMenuCheckboxItem checked={visibleAssetColumns.type} onCheckedChange={(checked) => setVisibleAssetColumns((current) => ({ ...current, type: Boolean(checked) }))}>Type</DropdownMenuCheckboxItem>
-                    <DropdownMenuCheckboxItem checked={visibleAssetColumns.region} onCheckedChange={(checked) => setVisibleAssetColumns((current) => ({ ...current, region: Boolean(checked) }))}>Branch / Region</DropdownMenuCheckboxItem>
+                    <DropdownMenuCheckboxItem checked={visibleAssetColumns.region} onCheckedChange={(checked) => setVisibleAssetColumns((current) => ({ ...current, region: Boolean(checked) }))}>Coverage / Region</DropdownMenuCheckboxItem>
                     <DropdownMenuCheckboxItem checked={visibleAssetColumns.exposure} onCheckedChange={(checked) => setVisibleAssetColumns((current) => ({ ...current, exposure: Boolean(checked) }))}>GAB Exposure</DropdownMenuCheckboxItem>
                     <DropdownMenuCheckboxItem checked={visibleAssetColumns.vulnerabilityCount} onCheckedChange={(checked) => setVisibleAssetColumns((current) => ({ ...current, vulnerabilityCount: Boolean(checked) }))}>Vulnerability Count</DropdownMenuCheckboxItem>
                     <DropdownMenuCheckboxItem checked={visibleAssetColumns.maxSeverity} onCheckedChange={(checked) => setVisibleAssetColumns((current) => ({ ...current, maxSeverity: Boolean(checked) }))}>Max Severity</DropdownMenuCheckboxItem>
@@ -544,14 +714,24 @@ export default function VulnerabilitiesPageClient({
           </div>
 
           <div className="space-y-3 p-4 md:hidden">
-            {viewMode === "cve"
-              ? paginatedCves.map((vulnerability, index) => {
+            {viewMode !== "asset"
+              ? paginatedQueueRows.map((vulnerability, index) => {
+                const isCampaign = isCampaignRow(vulnerability);
                 const fixRank = isRecommendedFixOrder
                   ? (currentPage - 1) * PAGE_SIZE + index + 1
                   : vulnerability.fixRank;
+                const href = isCampaign
+                  ? `/vulnerabilities/${vulnerability.representativeVulnerabilityId}`
+                  : `/vulnerabilities/${vulnerability.id}`;
+                const rowTitle = isCampaign
+                  ? campaignDisplayTitle(vulnerability.title)
+                  : vulnerability.cveId;
+                const rowSubtitle = isCampaign
+                  ? vulnerability.campaignRationale
+                  : vulnerability.title;
 
                 return (
-                <div key={vulnerability.id} className="rounded-xl border border-[#E9ECEF] p-4 dark:border-[#27272a]">
+                <div key={vulnerability.id} className={`rounded-xl border p-4 ${isCampaign && fixRank === 1 ? "border-[#BFDBFE] bg-[#EFF6FF]/70 dark:border-[#1d4ed8]/60 dark:bg-[#0A1A2D]/70" : "border-[#E9ECEF] dark:border-[#27272a]"}`}>
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
@@ -560,26 +740,37 @@ export default function VulnerabilitiesPageClient({
                             Fix #{fixRank}
                           </span>
                         ) : null}
-                        <Link href={`/vulnerabilities/${vulnerability.id}`} prefetch={false} className="text-sm font-semibold text-[#0C5CAB] dark:text-[#60A5FA]">
-                          {vulnerability.cveId}
+                        <Link href={href} prefetch={false} className="text-sm font-semibold text-[#0C5CAB] dark:text-[#60A5FA]">
+                          {rowTitle}
                         </Link>
                       </div>
-                      <p className="mt-1 text-sm text-[#1A1A2E] dark:text-[#fafafa]">{vulnerability.title}</p>
-                      {vulnerability.tieBreakReason ? (
+                      <p className="mt-1 text-sm text-[#1A1A2E] dark:text-[#fafafa]">{rowSubtitle}</p>
+                      {!isCampaign && vulnerability.tieBreakReason ? (
                         <p className="mt-1 text-xs leading-5 text-[#6B7280] dark:text-[#94A3B8]">
                           {vulnerability.tieBreakReason}
                         </p>
                       ) : null}
                       <p className="mt-1 text-xs text-[#6B7280] dark:text-[#94A3B8]">
-                        {vulnerability.gabExposureType ?? "GAB exposure unknown"} · ATM Payment Services {vulnerability.applicationSensitivity ?? "CIDT pending"} · score {vulnerability.riskScore ?? "pending"}
+                        {isCampaign
+                          ? `${vulnerability.cveCount} CVE${vulnerability.cveCount === 1 ? "" : "s"} · ${vulnerability.affectedAssetsCount} GAB${vulnerability.affectedAssetsCount === 1 ? "" : "s"} · ${vulnerability.exposureSummary}`
+                          : `${vulnerability.gabExposureType ?? "GAB exposure unknown"} · ${vulnerability.rankBucket ?? "Routine"} · score ${vulnerability.rankScore ?? vulnerability.riskScore ?? "pending"}`}
                       </p>
                     </div>
-                    <Link href={`/vulnerabilities/${vulnerability.id}`} prefetch={false}>
-                      <Button variant="ghost" size="sm" aria-label={`Open ${vulnerability.cveId}`} className="h-9 w-9 p-0 text-[#6B7280] hover:bg-[#EFF6FF] hover:text-[#0C5CAB] dark:text-[#94A3B8] dark:hover:bg-[#1a1a22] dark:hover:text-[#60A5FA]">
+                    <Link href={href} prefetch={false}>
+                      <Button variant="ghost" size="sm" aria-label={`Open ${rowTitle}`} className="h-9 w-9 p-0 text-[#6B7280] hover:bg-[#EFF6FF] hover:text-[#0C5CAB] dark:text-[#94A3B8] dark:hover:bg-[#1a1a22] dark:hover:text-[#60A5FA]">
                         <Eye className="h-4 w-4" />
                       </Button>
                     </Link>
                   </div>
+                  {isCampaign ? (
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      <CampaignMetricChip emphasis>{pluralize(vulnerability.cveCount, "CVE")}</CampaignMetricChip>
+                      <CampaignMetricChip>{pluralize(vulnerability.affectedAssetsCount, "GAB")}</CampaignMetricChip>
+                      <CampaignMetricChip>{vulnerability.exposureSummary}</CampaignMetricChip>
+                      <CampaignMetricChip>Score {vulnerability.rankScore}</CampaignMetricChip>
+                      {vulnerability.hasCisaKevSource ? <CampaignMetricChip>KEV</CampaignMetricChip> : null}
+                    </div>
+                  ) : null}
                   <div className="mt-4 grid grid-cols-2 gap-3 text-xs">
                     <div>
                       <p className="mb-1 text-[#9CA3AF] dark:text-[#64748B]">Severity</p>
@@ -641,7 +832,7 @@ export default function VulnerabilitiesPageClient({
 
           <div className="hidden md:block">
             <div className="overflow-x-auto w-full">
-              {viewMode === "cve" ? (
+              {viewMode !== "asset" ? (
                 <table className="w-full min-w-[1100px] text-sm">
                   <thead>
                     <tr className="dark-table-head border-b border-[#F3F4F6] dark:border-[#27272a]">
@@ -649,7 +840,7 @@ export default function VulnerabilitiesPageClient({
                         aria-sort={cveSortState("cveId") === "asc" ? "ascending" : cveSortState("cveId") === "desc" ? "descending" : "none"}
                         className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-[#6B7280] dark:text-[#94A3B8]"
                       >
-                        {renderSortableHeader("CVE", () => toggleCveSort("cveId"), cveSortState("cveId"))}
+                        {renderSortableHeader(viewMode === "campaign" ? "Campaign" : "CVE", () => toggleCveSort("cveId"), cveSortState("cveId"))}
                       </th>
                       {visibleCveColumns.severity && (
                         <th
@@ -662,9 +853,9 @@ export default function VulnerabilitiesPageClient({
                       {visibleCveColumns.priority && (
                         <th
                           aria-sort={cveSortState("businessPriority") === "asc" ? "ascending" : cveSortState("businessPriority") === "desc" ? "descending" : "none"}
-                          className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-[#6B7280] dark:text-[#94A3B8]"
+                          className="whitespace-nowrap px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-[#6B7280] dark:text-[#94A3B8]"
                         >
-                          {renderSortableHeader("Biz Priority", () => toggleCveSort("businessPriority"), cveSortState("businessPriority"))}
+                          {renderSortableHeader(viewMode === "campaign" ? "Fix" : "Fix bucket", () => toggleCveSort("businessPriority"), cveSortState("businessPriority"))}
                         </th>
                       )}
                       {visibleCveColumns.affectedAssetsCount && (
@@ -676,10 +867,10 @@ export default function VulnerabilitiesPageClient({
                         </th>
                       )}
                       {visibleCveColumns.kev && <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-[#6B7280] dark:text-[#94A3B8]">KEV</th>}
-                      {visibleCveColumns.firstSeen && (
+                      {visibleCveColumns.firstSeen && viewMode !== "campaign" && (
                         <th
                           aria-sort={cveSortState("firstSeen") === "asc" ? "ascending" : cveSortState("firstSeen") === "desc" ? "descending" : "none"}
-                          className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-[#6B7280] dark:text-[#94A3B8]"
+                          className="whitespace-nowrap px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-[#6B7280] dark:text-[#94A3B8]"
                         >
                           {renderSortableHeader("First Seen", () => toggleCveSort("firstSeen"), cveSortState("firstSeen"))}
                         </th>
@@ -687,51 +878,89 @@ export default function VulnerabilitiesPageClient({
                       {visibleCveColumns.slaDue && (
                         <th
                           aria-sort={cveSortState("slaDue") === "asc" ? "ascending" : cveSortState("slaDue") === "desc" ? "descending" : "none"}
-                          className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-[#6B7280] dark:text-[#94A3B8]"
+                          className="whitespace-nowrap px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-[#6B7280] dark:text-[#94A3B8]"
                         >
                           {renderSortableHeader("SLA Due", () => toggleCveSort("slaDue"), cveSortState("slaDue"))}
                         </th>
                       )}
-                      {visibleCveColumns.actions && <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-[#6B7280] dark:text-[#94A3B8]">Actions</th>}
+                      {visibleCveColumns.actions && <th className="whitespace-nowrap px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-[#6B7280] dark:text-[#94A3B8]">Open</th>}
                     </tr>
                   </thead>
                   <tbody>
-                    {paginatedCves.map((vulnerability, index) => {
+                    {paginatedQueueRows.map((vulnerability, index) => {
+                      const isCampaign = isCampaignRow(vulnerability);
                       const fixRank = isRecommendedFixOrder
                         ? (currentPage - 1) * PAGE_SIZE + index + 1
                         : vulnerability.fixRank;
+                      const href = isCampaign
+                        ? `/vulnerabilities/${vulnerability.representativeVulnerabilityId}`
+                        : `/vulnerabilities/${vulnerability.id}`;
+                      const rowTitle = isCampaign
+                        ? campaignDisplayTitle(vulnerability.title)
+                        : vulnerability.cveId;
+                      const rowSubtitle = isCampaign
+                        ? vulnerability.campaignRationale
+                        : vulnerability.title;
 
                       return (
-                      <tr key={vulnerability.id} className="dark-table-row border-b border-[#F3F4F6] last:border-0 dark:border-[#27272a] hover:bg-[#F9FAFB] dark:hover:bg-[#1a1a22]/50">
-                        <td className="px-4 py-3">
+                      <tr key={vulnerability.id} className={`dark-table-row border-b border-[#F3F4F6] last:border-0 dark:border-[#27272a] ${isCampaign && fixRank === 1 ? "bg-[#EFF6FF]/70 dark:bg-[#0A1A2D]/55" : "hover:bg-[#F9FAFB] dark:hover:bg-[#1a1a22]/50"}`}>
+                        <td className="px-4 py-4">
                           <div className="flex flex-wrap items-center gap-2">
                             {fixRank ? (
                               <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${fixRank === 1 ? "bg-[#0C5CAB] text-white dark:bg-[#3B82F6]" : "bg-[#EFF6FF] text-[#0C5CAB] dark:bg-[#0A1A2D] dark:text-[#60A5FA]"}`}>
                                 Fix #{fixRank}
                               </span>
                             ) : null}
-                            <Link href={`/vulnerabilities/${vulnerability.id}`} prefetch={false} className="font-semibold text-[#0C5CAB] hover:text-[#0a4a8a] dark:text-[#60A5FA] dark:hover:text-[#93C5FD]">{vulnerability.cveId}</Link>
+                            <Link href={href} prefetch={false} className="font-semibold text-[#0C5CAB] hover:text-[#0a4a8a] dark:text-[#60A5FA] dark:hover:text-[#93C5FD]">{rowTitle}</Link>
                           </div>
-                          <p className="max-w-[220px] truncate text-xs text-[#6B7280] dark:text-[#64748B]">{vulnerability.title}</p>
-                          <p className="mt-0.5 max-w-[260px] truncate text-[11px] text-[#6B7280] dark:text-[#94A3B8]">
-                            {vulnerability.gabExposureType ?? "GAB exposure unknown"} · ATM Payment Services {vulnerability.applicationSensitivity ?? "CIDT pending"} · score {vulnerability.riskScore ?? "pending"}
+                          <p className={`${isCampaign ? "max-w-[520px]" : "max-w-[300px] truncate"} text-xs leading-5 text-[#6B7280] dark:text-[#64748B]`}>{rowSubtitle}</p>
+                          <p className={`mt-0.5 ${isCampaign ? "max-w-[520px]" : "max-w-[300px] truncate"} text-[11px] leading-5 text-[#6B7280] dark:text-[#94A3B8]`}>
+                            {isCampaign
+                              ? `${vulnerability.groupedCvesText}`
+                              : `${vulnerability.gabExposureType ?? "GAB exposure unknown"} · ${vulnerability.rankBucket ?? "Routine"} · score ${vulnerability.rankScore ?? vulnerability.riskScore ?? "pending"}`}
                           </p>
-                          {vulnerability.tieBreakReason ? (
-                            <p className="mt-0.5 max-w-[260px] truncate text-[11px] text-[#6B7280] dark:text-[#94A3B8]">
+                          {isCampaign ? (
+                            <div className="mt-2 flex max-w-[560px] flex-wrap gap-1.5">
+                              <CampaignMetricChip emphasis>{pluralize(vulnerability.cveCount, "CVE")}</CampaignMetricChip>
+                              <CampaignMetricChip>{pluralize(vulnerability.affectedAssetsCount, "GAB")}</CampaignMetricChip>
+                              <CampaignMetricChip>{vulnerability.exposureSummary}</CampaignMetricChip>
+                              <CampaignMetricChip>Score {vulnerability.rankScore}</CampaignMetricChip>
+                            </div>
+                          ) : vulnerability.tieBreakReason ? (
+                            <p className="mt-0.5 max-w-[300px] truncate text-[11px] text-[#6B7280] dark:text-[#94A3B8]">
                               {vulnerability.tieBreakReason}
                             </p>
                           ) : null}
                         </td>
                         {visibleCveColumns.severity && <td className="px-4 py-3"><SeverityBadge severity={vulnerability.severity} score={vulnerability.cvssScore} /></td>}
                         {visibleCveColumns.priority && <td className="px-4 py-3"><PriorityBadge priority={vulnerability.businessPriority} /></td>}
-                        {visibleCveColumns.affectedAssetsCount && <td className="px-4 py-3 font-semibold text-[#1A1A2E] dark:text-[#fafafa]">{vulnerability.affectedAssetsCount}</td>}
+                        {visibleCveColumns.affectedAssetsCount && (
+                          <td className="px-4 py-3 font-semibold text-[#1A1A2E] dark:text-[#fafafa]">
+                            {isCampaign ? (
+                              <div className="space-y-1 whitespace-nowrap">
+                                <p>{vulnerability.affectedAssetsCount} GAB{vulnerability.affectedAssetsCount === 1 ? "" : "s"}</p>
+                                <p className="text-[11px] font-medium text-[#6B7280] dark:text-[#94A3B8]">{vulnerability.findingCount} finding{vulnerability.findingCount === 1 ? "" : "s"}</p>
+                              </div>
+                            ) : (
+                              vulnerability.affectedAssetsCount
+                            )}
+                          </td>
+                        )}
                         {visibleCveColumns.kev && <td className="px-4 py-3"><KevBadge maturity={vulnerability.exploitMaturity} /></td>}
-                        {visibleCveColumns.firstSeen && <td className="whitespace-nowrap px-4 py-3 text-[#6B7280] dark:text-[#94A3B8]">{vulnerability.firstSeen}</td>}
-                        {visibleCveColumns.slaDue && <td className="px-4 py-3"><SlaBadge status={vulnerability.slaStatus} /></td>}
+                        {visibleCveColumns.firstSeen && viewMode !== "campaign" && <td className="whitespace-nowrap px-4 py-3 text-[#6B7280] dark:text-[#94A3B8]">{vulnerability.firstSeen}</td>}
+                        {visibleCveColumns.slaDue && <td className="whitespace-nowrap px-4 py-3"><SlaBadge status={vulnerability.slaStatus} /></td>}
                         {visibleCveColumns.actions && (
                           <td className="px-4 py-3">
-                            <Link href={`/vulnerabilities/${vulnerability.id}`} prefetch={false}>
-                              <Button variant="ghost" size="sm" aria-label={`Open ${vulnerability.cveId}`} className="h-9 w-9 p-0 text-[#6B7280] hover:bg-[#EFF6FF] hover:text-[#0C5CAB] dark:text-[#94A3B8] dark:hover:bg-[#1a1a22] dark:hover:text-[#60A5FA]"><Eye className="h-4 w-4" /></Button>
+                            <Link href={href} prefetch={false}>
+                              <Button variant={isCampaign ? "outline" : "ghost"} size="sm" aria-label={`Open ${rowTitle}`} className={isCampaign ? "h-9 whitespace-nowrap border-[#E9ECEF] bg-white px-3 text-xs font-semibold text-[#0C5CAB] hover:bg-[#EFF6FF] dark:border-[#27272a] dark:bg-[#111827] dark:text-[#93C5FD] dark:hover:bg-[#1a1a22]" : "h-9 w-9 p-0 text-[#6B7280] hover:bg-[#EFF6FF] hover:text-[#0C5CAB] dark:text-[#94A3B8] dark:hover:bg-[#1a1a22] dark:hover:text-[#60A5FA]"}>
+                                {isCampaign ? (
+                                  <>
+                                    Open <ArrowRight className="ml-1.5 h-3.5 w-3.5" />
+                                  </>
+                                ) : (
+                                  <Eye className="h-4 w-4" />
+                                )}
+                              </Button>
                             </Link>
                           </td>
                         )}
@@ -751,7 +980,7 @@ export default function VulnerabilitiesPageClient({
                         {renderSortableHeader("Asset", () => toggleAssetSort("name"), assetSortState("name"))}
                       </th>
                       {visibleAssetColumns.type && <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-[#6B7280] dark:text-[#94A3B8]">Type</th>}
-                      {visibleAssetColumns.region && <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-[#6B7280] dark:text-[#94A3B8]">Branch / Region</th>}
+                      {visibleAssetColumns.region && <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-[#6B7280] dark:text-[#94A3B8]">Coverage / Region</th>}
                       {visibleAssetColumns.exposure && <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-[#6B7280] dark:text-[#94A3B8]">GAB Exposure</th>}
                       {visibleAssetColumns.vulnerabilityCount && (
                         <th
@@ -823,9 +1052,15 @@ export default function VulnerabilitiesPageClient({
           <PaginationControls
             currentPage={currentPage}
             totalPages={totalPages}
-            totalItems={viewMode === "cve" ? filteredCves.length : filteredAssets.length}
+            totalItems={
+              viewMode === "campaign"
+                ? filteredCampaigns.length
+                : viewMode === "cve"
+                  ? filteredCves.length
+                  : filteredAssets.length
+            }
             pageSize={PAGE_SIZE}
-            itemLabel={viewMode === "cve" ? "records" : "assets"}
+            itemLabel={viewMode === "campaign" ? "campaigns" : viewMode === "cve" ? "records" : "assets"}
             onPageChange={setPage}
           />
         </Card>

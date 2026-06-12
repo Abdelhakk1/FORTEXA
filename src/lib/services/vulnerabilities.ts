@@ -1,6 +1,6 @@
 import "server-only";
 
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import {
   assetVulnerabilityEnrichments,
@@ -8,13 +8,17 @@ import {
   cveEnrichments,
   cves,
   assets,
+  scanFindings,
 } from "@/db/schema";
-import type { Asset, Vulnerability } from "@/lib/types";
+import type { Asset, RemediationCampaign, Vulnerability } from "@/lib/types";
 import { measureServerTiming } from "@/lib/observability/timing";
 import { buildAssetBusinessContext } from "./assets";
 import {
+  calculateRankV2,
+  compareRankV2,
+  getRankV2SlaState,
   prioritySummaryFromFactors,
-  recommendedFixOrderScore,
+  normalizeEpssScore,
 } from "./business-priority";
 import {
   formatDate,
@@ -24,9 +28,9 @@ import {
   toUiExploitMaturity,
   toUiExposureLevel,
   toUiSeverity,
-  toUiSlaStatus,
   toUiVulnerabilityStatus as toUiLifecycleStatus,
 } from "./serializers";
+import { buildRemediationCampaignSignature } from "./remediation-campaigns";
 
 const severityRank = {
   critical: 5,
@@ -48,42 +52,217 @@ function isOutdoorGab(exposure: string | null | undefined) {
   return /outdoor/i.test(exposure ?? "");
 }
 
-function buildListTieBreakReason(vulnerability: Vulnerability) {
-  const signals = [
-    vulnerability.exploitMaturity === "Active in Wild (KEV)"
-      ? "known exploitation"
-      : null,
-    isOutdoorGab(vulnerability.gabExposureType)
-      ? "exposed outdoor GAB"
-      : null,
-    vulnerability.applicationSensitivity === "S4" ||
-    vulnerability.applicationProfile === "Profile 3" ||
-    vulnerability.applicationProfile === "Profile 4"
-      ? "ATM Payment Services sensitivity"
-      : null,
-    vulnerability.slaStatus !== "On Track" ? "SLA urgency" : null,
-    vulnerability.severity === "CRITICAL" ? "critical severity" : null,
-  ].filter(Boolean) as string[];
-  const topSignals = signals.slice(0, 3).join(", ");
+function majorPriorityProfileKey(rankV2: ReturnType<typeof calculateRankV2>) {
+  return [
+    rankV2.score,
+    rankV2.businessPriority,
+    rankV2.factorScores.severity,
+    rankV2.factorScores.threat,
+    rankV2.factorScores.business,
+    rankV2.factorScores.urgency,
+    rankV2.sortKey.cisaKev,
+    rankV2.sortKey.exploitMaturity,
+    rankV2.sortKey.epss,
+    rankV2.sortKey.slaUrgency,
+    rankV2.sortKey.slaDayBucket,
+    rankV2.sortKey.exposure,
+    rankV2.sortKey.maxCi,
+    rankV2.sortKey.maxDt,
+    rankV2.sortKey.lifecycle,
+  ].join("|");
+}
+
+function buildListTieBreakReason(
+  vulnerability: Vulnerability,
+  options?: {
+    sameCveTiedGroup?: boolean;
+    stablePriorityTie?: boolean;
+  }
+) {
+  if (options?.sameCveTiedGroup) {
+    return "Same-CVE campaign • remediate together";
+  }
+
+  if (options?.stablePriorityTie) {
+    return "Tied priority • stable display order";
+  }
+
+  const topSignals =
+    vulnerability.tieBreakReason || vulnerability.rankBucket || "deterministic factors";
 
   if ((vulnerability.sameScoreCount ?? 0) > 0) {
-    return topSignals
-      ? `Wins same-score tie on ${topSignals}.`
-      : "Wins same-score tie on deterministic business context.";
+    return `Wins same-score tie on ${topSignals}.`;
   }
 
   if (vulnerability.fixRank === 1) {
-    return topSignals
-      ? `Recommended first because of ${topSignals}.`
-      : "Recommended first by Fortexa's deterministic fix order.";
+    return `Recommended first because of ${topSignals}.`;
   }
 
-  return topSignals
-    ? `Ranked by ${topSignals}.`
-    : "Ranked by Fortexa's deterministic fix order.";
+  return `Ranked by ${topSignals}.`;
+}
+
+function uniqueSorted(values: Array<string | null | undefined>) {
+  return Array.from(new Set(values.filter((value): value is string => Boolean(value))))
+    .sort((left, right) => left.localeCompare(right));
+}
+
+function summarizeCampaignExposure(
+  vulnerabilities: Array<Vulnerability & { assetCode?: string; gabExposureType?: string }>
+) {
+  const exposureByAsset = new Map<string, string>();
+
+  for (const vulnerability of vulnerabilities) {
+    const assetCode = vulnerability.assetCode ?? vulnerability.id;
+    exposureByAsset.set(assetCode, vulnerability.gabExposureType ?? "Unknown");
+  }
+
+  const counts = new Map<string, number>();
+
+  for (const exposure of exposureByAsset.values()) {
+    counts.set(exposure, (counts.get(exposure) ?? 0) + 1);
+  }
+
+  const ordered = ["Outdoor GAB", "Indoor GAB", "Unknown"];
+  const parts = ordered.flatMap((exposure) => {
+    const count = counts.get(exposure) ?? 0;
+
+    if (count === 0) {
+      return [];
+    }
+
+    return [`${count} ${exposure}${count === 1 ? "" : "s"}`];
+  });
+
+  return parts.join(", ") || "GAB exposure unknown";
+}
+
+function buildRemediationCampaigns(
+  vulnerabilities: Array<
+    Vulnerability & {
+      assetCode?: string;
+      assetName?: string;
+      scannerFindingCode?: string | null;
+      scannerFindingTitle?: string | null;
+      remediationText?: string | null;
+      rankV2?: ReturnType<typeof calculateRankV2>;
+    }
+  >
+) {
+  const campaignMap = new Map<
+    string,
+    {
+      signature: ReturnType<typeof buildRemediationCampaignSignature>;
+      vulnerabilities: typeof vulnerabilities;
+    }
+  >();
+
+  for (const vulnerability of vulnerabilities) {
+    const signature = buildRemediationCampaignSignature({
+      cveId: vulnerability.cveId,
+      cveTitle: vulnerability.title.replace(/^.+? · /, ""),
+      scannerFindingCode: vulnerability.scannerFindingCode,
+      scannerFindingTitle: vulnerability.scannerFindingTitle,
+      remediationText: vulnerability.remediationText,
+    });
+    const existing = campaignMap.get(signature.key);
+
+    if (existing) {
+      existing.vulnerabilities.push(vulnerability);
+      continue;
+    }
+
+    campaignMap.set(signature.key, {
+      signature,
+      vulnerabilities: [vulnerability],
+    });
+  }
+
+  const campaigns = Array.from(campaignMap.values()).map(
+    ({ signature, vulnerabilities: campaignVulnerabilities }) => {
+      const orderedVulnerabilities = [...campaignVulnerabilities].sort((left, right) => {
+        if (left.rankV2 && right.rankV2) {
+          const rankDelta = compareRankV2(left.rankV2, right.rankV2);
+
+          if (rankDelta !== 0) {
+            return rankDelta;
+          }
+        }
+
+        return left.id.localeCompare(right.id);
+      });
+      const representative = orderedVulnerabilities[0];
+      const cveIds = uniqueSorted(orderedVulnerabilities.map((item) => item.cveId));
+      const affectedAssetCodes = uniqueSorted(
+        orderedVulnerabilities.map((item) => item.assetCode)
+      );
+      const groupedCvesText = cveIds.join(", ");
+      const isGroupedCampaign =
+        cveIds.length > 1 || affectedAssetCodes.length > 1 || orderedVulnerabilities.length > 1;
+      const campaignRationale =
+        signature.basis === "ms17_010"
+          ? "Fix together: same Microsoft MS17-010 update, same remediation path."
+          : `Fix together: ${signature.rationale}.`;
+
+      return {
+        id: signature.key,
+        representativeVulnerabilityId: representative.id,
+        title: signature.title,
+        description: isGroupedCampaign
+          ? `Covers ${groupedCvesText} across ${affectedAssetCodes.length} GAB${affectedAssetCodes.length === 1 ? "" : "s"}.`
+          : "Single finding campaign retained for operator queue consistency.",
+        cveIds,
+        affectedAssetCodes,
+        affectedAssetsCount: affectedAssetCodes.length,
+        cveCount: cveIds.length,
+        findingCount: orderedVulnerabilities.length,
+        severity: representative.severity,
+        cvssScore: representative.cvssScore,
+        businessPriority: representative.businessPriority,
+        riskScore: representative.rankScore ?? representative.riskScore ?? 0,
+        rankScore: representative.rankScore ?? representative.riskScore ?? 0,
+        rankBucket: representative.rankBucket ?? "Routine",
+        recommendedFixOrder:
+          representative.recommendedFixOrder ?? representative.rankScore ?? representative.riskScore ?? 0,
+        fixRank: 0,
+        exploitMaturity: representative.exploitMaturity,
+        hasCisaKevSource: orderedVulnerabilities.some((item) => item.hasCisaKevSource),
+        epssScore: Math.max(
+          ...orderedVulnerabilities.map((item) => item.epssScore ?? 0)
+        ),
+        slaDue: representative.slaDue,
+        slaStatus: representative.slaStatus,
+        firstSeen: representative.firstSeen,
+        lastSeen: representative.lastSeen,
+        exposureSummary: summarizeCampaignExposure(orderedVulnerabilities),
+        campaignRationale,
+        tieBreakReason: campaignRationale,
+        groupedCvesText,
+        rawFindingIds: orderedVulnerabilities.map((item) => item.id),
+        rankV2: representative.rankV2,
+      };
+    }
+  );
+
+  return campaigns
+    .sort((left, right) => {
+      if (left.rankV2 && right.rankV2) {
+        const rankDelta = compareRankV2(left.rankV2, right.rankV2);
+
+        if (rankDelta !== 0) {
+          return rankDelta;
+        }
+      }
+
+      return left.title.localeCompare(right.title);
+    })
+    .map(({ rankV2, ...campaign }, index) => ({
+      ...campaign,
+      fixRank: index + 1,
+    })) satisfies RemediationCampaign[];
 }
 
 export interface VulnerabilityOverviewData {
+  remediationCampaigns: RemediationCampaign[];
   vulnerabilities: Vulnerability[];
   assets: Asset[];
   severityDistribution: Array<{ name: string; value: number; color: string }>;
@@ -116,6 +295,7 @@ export async function getVulnerabilityOverviewData(
 
   if (!db) {
     return {
+      remediationCampaigns: [],
       vulnerabilities: [],
       assets: [],
       severityDistribution: [
@@ -138,6 +318,65 @@ export async function getVulnerabilityOverviewData(
           cve: cves,
           enrichment: cveEnrichments,
           avEnrichment: assetVulnerabilityEnrichments,
+          hasCisaKevSource: sql<boolean>`coalesce((
+            select true
+            from cve_source_references source
+            where source.cve_id = ${cves.id}
+              and source.source_type = 'cisa_kev'
+            limit 1
+          ), false)`,
+          epssScore: sql<number | null>`(
+            select max(
+              case
+                when (source.retrieval_metadata->>'epss') ~ '^[0-9]+(\\.[0-9]+)?$'
+                  then (source.retrieval_metadata->>'epss')::double precision
+                else null
+              end
+            )
+            from cve_source_references source
+            where source.cve_id = ${cves.id}
+              and (
+                source.name ilike '%EPSS%'
+                or source.retrieval_metadata->>'retrievalMethod' = 'first_epss_api'
+              )
+          )`,
+          trustedSourceCount: sql<number>`(
+            select count(*)::int
+            from cve_source_references source
+            where source.cve_id = ${cves.id}
+          )`,
+          scannerEvidenceCount: sql<number>`(
+            select count(*)::int
+            from scan_findings finding
+            where finding.organization_id = ${assetVulnerabilities.organizationId}
+              and finding.matched_asset_id = ${assets.id}
+              and finding.matched_cve_id = ${cves.id}
+          )`,
+          scannerEvidenceQuality: sql<number | null>`(
+            select avg(finding.match_confidence)::double precision
+            from scan_findings finding
+            where finding.organization_id = ${assetVulnerabilities.organizationId}
+              and finding.matched_asset_id = ${assets.id}
+              and finding.matched_cve_id = ${cves.id}
+          )`,
+          scannerFindingCode: sql<string | null>`(
+            select finding.finding_code
+            from scan_findings finding
+            where finding.organization_id = ${assetVulnerabilities.organizationId}
+              and finding.matched_asset_id = ${assets.id}
+              and finding.matched_cve_id = ${cves.id}
+            order by finding.last_seen desc
+            limit 1
+          )`,
+          scannerFindingTitle: sql<string | null>`(
+            select finding.title
+            from scan_findings finding
+            where finding.organization_id = ${assetVulnerabilities.organizationId}
+              and finding.matched_asset_id = ${assets.id}
+              and finding.matched_cve_id = ${cves.id}
+            order by finding.last_seen desc
+            limit 1
+          )`,
         })
         .from(assetVulnerabilities)
         .innerJoin(assets, eq(assetVulnerabilities.assetId, assets.id))
@@ -169,33 +408,58 @@ export async function getVulnerabilityOverviewData(
                 }
               : undefined;
           const cvssScore = row.cve.cvssScore ? Number(row.cve.cvssScore) : 0;
-          const recommendedFixOrder = recommendedFixOrderScore({
-            businessPriority: row.av.businessPriority,
-            gabExposureType: row.asset.gabExposureType,
-            applicationSensitivity:
-              priorityFactors?.applicationSensitivity ||
-              assetBusinessContext.businessApplication.cidt.sensitivity,
-            applicationProfile:
-              priorityFactors?.applicationProfile ||
-              assetBusinessContext.businessApplication.profile,
+          const hasCisaKevSource = Boolean(row.hasCisaKevSource);
+          const epssScore = normalizeEpssScore(row.epssScore);
+          const slaState = getRankV2SlaState({
+            slaDue: row.av.slaDue,
+            slaStatus: row.av.slaStatus,
+          });
+          const rankV2 = calculateRankV2({
             severity: row.cve.severity,
             cvssScore,
             exploitMaturity: row.cve.exploitMaturity,
+            knownExploitation: hasCisaKevSource,
+            epssScore,
+            assetCidt: assetBusinessContext.cidt,
+            applicationCidt: assetBusinessContext.businessApplication.cidt,
+            applicationInternetExposed:
+              assetBusinessContext.businessApplication.isInternetExposed,
+            gabExposureType: row.asset.gabExposureType,
+            slaDue: row.av.slaDue,
             slaStatus: row.av.slaStatus,
-            riskScore: row.av.riskScore,
+            lifecycleStatus: row.av.status,
+            scannerEvidenceCount: row.scannerEvidenceCount,
+            scannerEvidenceQuality: row.scannerEvidenceQuality,
+            trustedSourceCount: row.trustedSourceCount,
+            firstSeen: row.av.firstSeen,
+            assetCode: row.asset.assetCode,
+            cveId: row.cve.cveId,
+            id: row.av.id,
           });
 
           return {
             id: row.av.id,
             cveId: row.cve.cveId,
+            assetCode: row.asset.assetCode,
+            assetName: row.asset.name,
+            scannerFindingCode: row.scannerFindingCode,
+            scannerFindingTitle: row.scannerFindingTitle,
+            remediationText: row.av.notes,
             title: `${row.asset.assetCode} · ${row.cve.title}`,
             description: row.cve.description ?? "",
             severity: toUiSeverity(row.cve.severity),
             cvssScore,
             cvssVector: row.cve.cvssVector ?? "—",
-            businessPriority: toUiBusinessPriority(row.av.businessPriority),
-            riskScore: row.av.riskScore,
-            recommendedFixOrder,
+            businessPriority: toUiBusinessPriority(rankV2.businessPriority),
+            riskScore: rankV2.score,
+            rankScore: rankV2.score,
+            rankBucket: rankV2.bucketLabel,
+            rankAlgorithmVersion: rankV2.algorithmVersion,
+            rankFactors: rankV2.factorScores,
+            missingRankEvidence: rankV2.missingEvidence,
+            recommendedFixOrder: rankV2.score,
+            tieBreakReason: rankV2.shortReason,
+            rankV2,
             gabExposureType: assetBusinessContext.gabExposureType,
             gabExposureTypeDb: assetBusinessContext.gabExposureTypeDb,
             assetSensitivity: assetBusinessContext.cidt.sensitivity,
@@ -205,7 +469,11 @@ export async function getVulnerabilityOverviewData(
             applicationProfile:
               priorityFactors?.applicationProfile ||
               assetBusinessContext.businessApplication.profile,
-            exploitMaturity: toUiExploitMaturity(row.cve.exploitMaturity),
+            exploitMaturity: toUiExploitMaturity(row.cve.exploitMaturity, {
+              confirmedCisaKev: hasCisaKevSource,
+            }),
+            hasCisaKevSource,
+            epssScore,
             affectedAssetsCount: 1,
             patchAvailable: row.cve.patchAvailable,
             aiRemediationAvailable:
@@ -216,7 +484,7 @@ export async function getVulnerabilityOverviewData(
             firstSeen: formatDate(row.av.firstSeen),
             lastSeen: formatDate(row.av.lastSeen),
             slaDue: formatDate(row.av.slaDue),
-            slaStatus: toUiSlaStatus(row.av.slaStatus),
+            slaStatus: slaState.displayLabel as Vulnerability["slaStatus"],
             affectedProducts: row.cve.affectedProducts ?? [],
             impactAnalysis: row.enrichment?.impactAnalysis ?? "",
             exploitConditions: row.enrichment?.exploitConditions ?? "",
@@ -248,37 +516,72 @@ export async function getVulnerabilityOverviewData(
           };
         })
         .sort((left, right) => {
-          const orderDelta = right.recommendedFixOrder - left.recommendedFixOrder;
+          const orderDelta = compareRankV2(left.rankV2, right.rankV2);
 
           if (orderDelta !== 0) {
             return orderDelta;
           }
 
-          return right.riskScore - left.riskScore;
+          return left.id.localeCompare(right.id);
         });
       const scoreCounts = new Map<number, number>();
+      const bucketCounts = new Map<string, number>();
 
       for (const vulnerability of vulnerabilityRows) {
-        const score = vulnerability.riskScore ?? 0;
+        const score = vulnerability.rankScore ?? vulnerability.riskScore ?? 0;
         scoreCounts.set(score, (scoreCounts.get(score) ?? 0) + 1);
+        const bucket = vulnerability.businessPriority;
+        bucketCounts.set(bucket, (bucketCounts.get(bucket) ?? 0) + 1);
+      }
+      const priorityProfileCounts = new Map<string, number>();
+      const sameCvePriorityProfileCounts = new Map<string, number>();
+
+      for (const vulnerability of vulnerabilityRows) {
+        const profileKey = majorPriorityProfileKey(vulnerability.rankV2);
+        priorityProfileCounts.set(
+          profileKey,
+          (priorityProfileCounts.get(profileKey) ?? 0) + 1
+        );
+
+        const cveProfileKey = `${vulnerability.cveId.toLowerCase()}|${profileKey}`;
+        sameCvePriorityProfileCounts.set(
+          cveProfileKey,
+          (sameCvePriorityProfileCounts.get(cveProfileKey) ?? 0) + 1
+        );
       }
 
       const vulnerabilities = vulnerabilityRows.map((vulnerability, index) => {
         const sameScoreCount = Math.max(
           0,
-          (scoreCounts.get(vulnerability.riskScore ?? 0) ?? 1) - 1
+          (scoreCounts.get(vulnerability.rankScore ?? vulnerability.riskScore ?? 0) ?? 1) - 1
+        );
+        const samePriorityCount = Math.max(
+          0,
+          (bucketCounts.get(vulnerability.businessPriority) ?? 1) - 1
         );
         const rankedVulnerability = {
           ...vulnerability,
           fixRank: index + 1,
           sameScoreCount,
+          samePriorityCount,
         };
+        const profileKey = majorPriorityProfileKey(vulnerability.rankV2);
+        const sameCveTiedGroup =
+          (sameCvePriorityProfileCounts.get(
+            `${vulnerability.cveId.toLowerCase()}|${profileKey}`
+          ) ?? 0) > 1;
+        const stablePriorityTie =
+          !sameCveTiedGroup && (priorityProfileCounts.get(profileKey) ?? 0) > 1;
 
         return {
           ...rankedVulnerability,
-          tieBreakReason: buildListTieBreakReason(rankedVulnerability),
+          tieBreakReason: buildListTieBreakReason(rankedVulnerability, {
+            sameCveTiedGroup,
+            stablePriorityTie,
+          }),
         };
       });
+      const remediationCampaigns = buildRemediationCampaigns(vulnerabilities);
 
       const assetStats = new Map<
         string,
@@ -354,6 +657,7 @@ export async function getVulnerabilityOverviewData(
       }, {});
 
       return {
+        remediationCampaigns,
         vulnerabilities,
         assets: assetsData,
         severityDistribution: [
@@ -387,6 +691,7 @@ export async function getVulnerabilityOverviewData(
     undefined,
     (result) => ({
       assets: result.assets.length,
+      remediationCampaigns: result.remediationCampaigns.length,
       vulnerabilities: result.vulnerabilities.length,
     })
   );

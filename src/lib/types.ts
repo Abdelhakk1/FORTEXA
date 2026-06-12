@@ -5,8 +5,21 @@ export type AssetStatus = "Active" | "Inactive" | "Maintenance" | "Decommissione
 export type RemediationStatus = "Open" | "Assigned" | "In Progress" | "Mitigated" | "Closed" | "Overdue";
 export type AlertStatus = "New" | "Acknowledged" | "In Progress" | "Resolved" | "Dismissed";
 export type ImportStatus = "Completed" | "Processing" | "Failed" | "Partial";
-export type ExploitMaturity = "Active in Wild (KEV)" | "POC Available" | "Theoretical" | "None";
+export type ExploitMaturity =
+  | "Active in Wild (KEV)"
+  | "Active in Wild"
+  | "POC Available"
+  | "Theoretical"
+  | "None";
 export type EnrichmentStatus = "Pending" | "Processing" | "Completed" | "Failed";
+export type SlaDisplayStatus =
+  | "Overdue"
+  | "Due today"
+  | `Due in ${number} day`
+  | `Due in ${number} days`
+  | "At Risk"
+  | "On Track"
+  | "No SLA";
 export type VulnerabilityStatus =
   | "New"
   | "Open"
@@ -28,6 +41,7 @@ export interface CidtContext {
   source?: string;
   sourceLabel?: string;
   templateKey?: string | null;
+  templateLabel?: string | null;
   isCustomOverride?: boolean;
 }
 
@@ -54,6 +68,7 @@ export interface Asset {
   exposureLevel: "Internet-Facing" | "Internal" | "Isolated";
   gabExposureType: string;
   gabExposureTypeDb: string;
+  cidtTemplateKey?: string | null;
   cidt: CidtContext;
   businessApplication: AtmPaymentServicesContext;
   status: AssetStatus;
@@ -76,6 +91,17 @@ export interface Vulnerability {
   cvssVector: string;
   businessPriority: BusinessPriority;
   riskScore?: number;
+  rankScore?: number;
+  rankBucket?: string;
+  rankAlgorithmVersion?: string;
+  rankFactors?: {
+    severity: number;
+    threat: number;
+    business: number;
+    urgency: number;
+  };
+  samePriorityCount?: number;
+  missingRankEvidence?: string[];
   recommendedFixOrder?: number;
   fixRank?: number;
   sameScoreCount?: number;
@@ -86,6 +112,8 @@ export interface Vulnerability {
   applicationSensitivity?: string;
   applicationProfile?: string;
   exploitMaturity: ExploitMaturity;
+  hasCisaKevSource?: boolean;
+  epssScore?: number | null;
   affectedAssetsCount: number;
   patchAvailable: boolean;
   aiRemediationAvailable: boolean;
@@ -93,7 +121,7 @@ export interface Vulnerability {
   firstSeen: string;
   lastSeen: string;
   slaDue: string;
-  slaStatus: "On Track" | "At Risk" | "Overdue";
+  slaStatus: SlaDisplayStatus;
   affectedProducts: string[];
   impactAnalysis: string;
   exploitConditions: string;
@@ -119,6 +147,38 @@ export interface Vulnerability {
   aiTags?: string[];
 }
 
+export interface RemediationCampaign {
+  id: string;
+  representativeVulnerabilityId: string;
+  title: string;
+  description: string;
+  cveIds: string[];
+  affectedAssetCodes: string[];
+  affectedAssetsCount: number;
+  cveCount: number;
+  findingCount: number;
+  severity: Severity;
+  cvssScore: number;
+  businessPriority: BusinessPriority;
+  riskScore: number;
+  rankScore: number;
+  rankBucket: string;
+  recommendedFixOrder: number;
+  fixRank: number;
+  exploitMaturity: ExploitMaturity;
+  hasCisaKevSource: boolean;
+  epssScore?: number | null;
+  slaDue: string;
+  slaStatus: SlaDisplayStatus;
+  firstSeen: string;
+  lastSeen: string;
+  exposureSummary: string;
+  campaignRationale: string;
+  tieBreakReason: string;
+  groupedCvesText: string;
+  rawFindingIds: string[];
+}
+
 export interface TrustedSource {
   name: string;
   url: string;
@@ -142,7 +202,7 @@ export interface RemediationTask {
   assignedOwner: string;
   assignedAvatar: string;
   dueDate: string;
-  slaStatus: "On Track" | "At Risk" | "Overdue";
+  slaStatus: SlaDisplayStatus;
   status: RemediationStatus;
   priority: Severity;
   businessPriority: BusinessPriority;

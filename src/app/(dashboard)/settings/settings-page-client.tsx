@@ -10,6 +10,7 @@ import {
   Database,
   Lock,
   MapPin,
+  Plus,
   RefreshCw,
   Save,
   Send,
@@ -94,6 +95,8 @@ type GabCidtTemplateRow = {
   id: string;
   templateKey: string;
   label: string;
+  description: string | null;
+  isDefault: boolean;
   cidtConfidentiality: number;
   cidtIntegrity: number;
   cidtAvailability: number;
@@ -110,6 +113,11 @@ type AssetClassificationRuleRow = {
   enabled: boolean;
 };
 
+type AssetClassificationRulesSaveData = {
+  classifiedAssets: number;
+  rules: AssetClassificationRuleRow[];
+};
+
 type SaveState = {
   section: string;
   status: "saved" | "error";
@@ -121,11 +129,22 @@ const fieldClass =
 const fieldHelpClass = "text-xs leading-5 text-[#6B7280] dark:text-[#94A3B8]";
 const gabExposureOptions = [
   { value: "unknown", label: "Unknown" },
-  { value: "indoor_agency", label: "Indoor agency GAB" },
-  { value: "outdoor_agency", label: "Outdoor agency GAB" },
-  { value: "outdoor_commercial_center", label: "Outdoor commercial-center GAB" },
-  { value: "outdoor_public_street", label: "Outdoor public/street GAB" },
+  { value: "indoor_agency", label: "Indoor GAB" },
+  { value: "outdoor_agency", label: "Outdoor GAB" },
 ];
+
+function sensitivityMeaning(sensitivity: string) {
+  switch (sensitivity) {
+    case "S4":
+      return "Critical business impact: outage, integrity loss, or traceability failure may directly disrupt ATM Payment Services.";
+    case "S3":
+      return "High business impact: strong protection expected for ATM Payment Services continuity and auditability.";
+    case "S2":
+      return "Moderate business impact: standard GAB protection baseline.";
+    default:
+      return "Lower business impact: routine controls are usually sufficient.";
+  }
+}
 
 function SectionCard({
   icon: Icon,
@@ -344,6 +363,9 @@ export function SettingsPageClient({
     gabCidtTemplates.map((template) => ({
       templateKey: template.templateKey,
       label: template.label,
+      description: template.description ?? "",
+      isDefault: template.isDefault,
+      archived: false,
       cidtConfidentiality: template.cidtConfidentiality,
       cidtIntegrity: template.cidtIntegrity,
       cidtAvailability: template.cidtAvailability,
@@ -472,9 +494,13 @@ export function SettingsPageClient({
     return () => window.clearTimeout(timer);
   }, [teamToast]);
 
-  function runAction(
+  function runAction<T = unknown>(
     section: string,
-    action: () => Promise<{ ok: boolean; message?: string }>
+    action: () => Promise<{ ok: boolean; message?: string; data?: T }>,
+    options?: {
+      onSuccess?: (data: T) => void;
+      successMessage?: (data: T) => string;
+    }
   ) {
     if (!canManageSettings) {
       setSaveState({
@@ -487,13 +513,48 @@ export function SettingsPageClient({
 
     startTransition(async () => {
       const result = await action();
+      if (result.ok && result.data && options?.onSuccess) {
+        options.onSuccess(result.data);
+      }
+
       setSaveState({
         section,
         status: result.ok ? "saved" : "error",
         message: result.ok
-          ? `${section} saved.`
+          ? options?.successMessage && result.data
+            ? options.successMessage(result.data)
+            : `${section} saved.`
           : result.message ?? `${section} could not be saved.`,
       });
+    });
+  }
+
+  function addClassificationRule(input: {
+    name: string;
+    matchValue: string;
+    gabExposureType: string;
+  }) {
+    setClassificationRules((current) => {
+      const usedNames = new Set(current.map((rule) => rule.name.toLowerCase()));
+      let name = input.name;
+      let suffix = 2;
+
+      while (usedNames.has(name.toLowerCase())) {
+        name = `${input.name} (${suffix})`;
+        suffix += 1;
+      }
+
+      return [
+        ...current,
+        {
+          id: `draft-${Date.now()}-${current.length + 1}`,
+          name,
+          field: "hostname",
+          matchValue: input.matchValue,
+          gabExposureType: input.gabExposureType,
+          enabled: true,
+        },
+      ];
     });
   }
 
@@ -705,10 +766,7 @@ export function SettingsPageClient({
               );
             }}
           >
-            {[
-              ["atmGabFleet", "GAB fleet"],
-              ["vendorManagedSystems", "Vendor-managed systems"],
-            ].map(([key, label]) => (
+            {[["atmGabFleet", "GAB fleet"]].map(([key, label]) => (
               <div
                 key={key}
                 className="flex items-center justify-between rounded-xl border border-[#E9ECEF] bg-[#F9FAFB] px-4 py-3 dark:border-[#27272a] dark:bg-[#1a1a22]"
@@ -836,7 +894,7 @@ export function SettingsPageClient({
         <SectionCard
           icon={ShieldCheck}
           title="GAB CIDT Templates"
-          description="Fleet defaults used when a GAB does not need a custom CIDT override."
+          description="Business-impact CIDT presets. Exposure stays only Unknown, Indoor, or Outdoor."
         >
           <form
             className="space-y-4"
@@ -847,27 +905,88 @@ export function SettingsPageClient({
               );
             }}
           >
+            <div className="rounded-xl border border-[#BFDBFE] bg-[#EFF6FF] px-4 py-3 text-xs leading-5 text-[#1E3A8A] dark:border-[#1d4ed8]/60 dark:bg-[#0A1A2D] dark:text-[#BFDBFE]">
+              Templates set business CIDT. Indoor/outdoor exposure is an attack-opportunity factor and is scored separately in Rank v2.
+            </div>
             <div className="space-y-3">
-              {gabTemplateProfiles.map((template, templateIndex) => (
+              {gabTemplateProfiles
+                .filter((template) => !template.archived)
+                .map((template, templateIndex) => (
                 <div
                   key={template.templateKey}
                   className="rounded-xl border border-[#E9ECEF] bg-[#F9FAFB] p-4 dark:border-[#27272a] dark:bg-[#1a1a22]"
                 >
                   <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                     <div>
-                      <p className="text-sm font-semibold text-[#1A1A2E] dark:text-[#fafafa]">
-                        {template.label}
-                      </p>
+                      {template.isDefault ? (
+                        <p className="text-sm font-semibold text-[#1A1A2E] dark:text-[#fafafa]">
+                          {template.label}
+                        </p>
+                      ) : (
+                        <Input
+                          disabled={!canManageSettings}
+                          value={template.label}
+                          onChange={(event) =>
+                            setGabTemplates((current) =>
+                              current.map((row) =>
+                                row.templateKey === template.templateKey
+                                  ? { ...row, label: event.target.value }
+                                  : row
+                              )
+                            )
+                          }
+                          placeholder="Template name"
+                          className={`${fieldClass} max-w-sm`}
+                        />
+                      )}
                       <p className={fieldHelpClass}>
                         Sensitivity {template.sensitivity} from C
                         {template.cidtConfidentiality} I{template.cidtIntegrity} D
                         {template.cidtAvailability} T{template.cidtTraceability}
                       </p>
+                      <p className="mt-1 text-xs leading-5 text-[#6B7280] dark:text-[#94A3B8]">
+                        {sensitivityMeaning(template.sensitivity)}
+                      </p>
                     </div>
-                    <span className="rounded-full border border-[#BFDBFE] bg-[#EFF6FF] px-2.5 py-1 text-xs font-semibold text-[#1E3A8A] dark:border-[#1d4ed8]/60 dark:bg-[#0A1A2D] dark:text-[#BFDBFE]">
-                      {template.sensitivity}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className="rounded-full border border-[#BFDBFE] bg-[#EFF6FF] px-2.5 py-1 text-xs font-semibold text-[#1E3A8A] dark:border-[#1d4ed8]/60 dark:bg-[#0A1A2D] dark:text-[#BFDBFE]">
+                        {template.isDefault ? "Default" : "Custom"} · {template.sensitivity}
+                      </span>
+                      {!template.isDefault && canManageSettings ? (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          onClick={() =>
+                            setGabTemplates((current) =>
+                              current.map((row) =>
+                                row.templateKey === template.templateKey
+                                  ? { ...row, archived: true }
+                                  : row
+                              )
+                            )
+                          }
+                          className="h-9 text-[#6B7280] hover:bg-red-50 hover:text-red-600 dark:text-[#94A3B8] dark:hover:bg-red-500/10 dark:hover:text-red-300"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      ) : null}
+                    </div>
                   </div>
+                  <Input
+                    disabled={!canManageSettings}
+                    value={template.description ?? ""}
+                    onChange={(event) =>
+                      setGabTemplates((current) =>
+                        current.map((row) =>
+                          row.templateKey === template.templateKey
+                            ? { ...row, description: event.target.value }
+                            : row
+                        )
+                      )
+                    }
+                    placeholder="Optional description"
+                    className={`${fieldClass} mb-3`}
+                  />
                   <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                     {[
                       ["cidtConfidentiality", "C"],
@@ -895,8 +1014,8 @@ export function SettingsPageClient({
                           }
                           onChange={(event) =>
                             setGabTemplates((current) =>
-                              current.map((row, index) =>
-                                index === templateIndex
+                              current.map((row) =>
+                                  row.templateKey === template.templateKey
                                   ? { ...row, [key]: Number(event.target.value) }
                                   : row
                               )
@@ -918,7 +1037,33 @@ export function SettingsPageClient({
               ))}
             </div>
             {canManageSettings ? (
-              <SaveButton pending={isPending}>Save templates</SaveButton>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() =>
+                    setGabTemplates((current) => [
+                      ...current,
+                      {
+                        templateKey: `draft-${current.length + 1}`,
+                        label: "Custom GAB CIDT template",
+                        description: "",
+                        isDefault: false,
+                        archived: false,
+                        cidtConfidentiality: 3,
+                        cidtIntegrity: 3,
+                        cidtAvailability: 3,
+                        cidtTraceability: 3,
+                      },
+                    ])
+                  }
+                  className="border-[#E9ECEF] bg-white text-[#1A1A2E] dark:border-[#27272a] dark:bg-[#141419] dark:text-[#fafafa]"
+                >
+                  <Plus className="mr-2 h-4 w-4" />
+                  Create template
+                </Button>
+                <SaveButton pending={isPending}>Save templates</SaveButton>
+              </div>
             ) : null}
           </form>
         </SectionCard>
@@ -932,16 +1077,27 @@ export function SettingsPageClient({
             className="space-y-4"
             onSubmit={(event) => {
               event.preventDefault();
-              runAction("Asset classification rules", () =>
-                updateAssetClassificationRulesAction({
-                  rules: classificationRules.map((rule) => ({
-                    name: rule.name,
-                    field: rule.field,
-                    matchValue: rule.matchValue,
-                    gabExposureType: rule.gabExposureType,
-                    enabled: rule.enabled,
-                  })),
-                })
+              runAction<AssetClassificationRulesSaveData>(
+                "Asset classification rules",
+                () =>
+                  updateAssetClassificationRulesAction({
+                    rules: classificationRules.map((rule) => ({
+                      name: rule.name,
+                      field: rule.field,
+                      matchValue: rule.matchValue,
+                      gabExposureType: rule.gabExposureType,
+                      enabled: rule.enabled,
+                    })),
+                  }),
+                {
+                  onSuccess: (data) => {
+                    setClassificationRules(data.rules);
+                  },
+                  successMessage: (data) =>
+                    data.classifiedAssets > 0
+                      ? `Asset classification rules saved. ${data.classifiedAssets} existing Unknown GAB${data.classifiedAssets === 1 ? "" : "s"} classified.`
+                      : "Asset classification rules saved. Future imports will use these rules.",
+                }
               );
             }}
           >
@@ -984,7 +1140,7 @@ export function SettingsPageClient({
                     <option value="hostname">Hostname</option>
                     <option value="name">Name</option>
                     <option value="asset_code">Asset code</option>
-                    <option value="branch">Branch</option>
+                    <option value="branch">Coverage area</option>
                     <option value="location">Location</option>
                   </select>
                   <Input
@@ -1044,21 +1200,31 @@ export function SettingsPageClient({
                   type="button"
                   variant="outline"
                   onClick={() =>
-                    setClassificationRules((current) => [
-                      ...current,
-                      {
-                        id: `draft-${current.length + 1}`,
-                        name: "Hostname contains OUT",
-                        field: "hostname",
-                        matchValue: "OUT",
-                        gabExposureType: "outdoor_agency",
-                        enabled: true,
-                      },
-                    ])
+                    addClassificationRule({
+                      name: "Hostname contains GAB-OUT",
+                      matchValue: "GAB-OUT",
+                      gabExposureType: "outdoor_agency",
+                    })
                   }
                   className="border-[#E9ECEF] bg-white text-[#1A1A2E] dark:border-[#27272a] dark:bg-[#141419] dark:text-[#fafafa]"
                 >
-                  Add rule
+                  <Plus className="mr-2 h-4 w-4" />
+                  Outdoor rule
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() =>
+                    addClassificationRule({
+                      name: "Hostname contains GAB-IN",
+                      matchValue: "GAB-IN",
+                      gabExposureType: "indoor_agency",
+                    })
+                  }
+                  className="border-[#E9ECEF] bg-white text-[#1A1A2E] dark:border-[#27272a] dark:bg-[#141419] dark:text-[#fafafa]"
+                >
+                  <Plus className="mr-2 h-4 w-4" />
+                  Indoor rule
                 </Button>
                 <SaveButton pending={isPending}>Save rules</SaveButton>
               </div>
@@ -1202,7 +1368,7 @@ export function SettingsPageClient({
             </div>
             <div className="flex items-center justify-between rounded-xl border border-[#E9ECEF] bg-[#F9FAFB] px-4 py-3 dark:border-[#27272a] dark:bg-[#1a1a22]">
               <span className="text-sm font-medium text-[#1A1A2E] dark:text-[#fafafa]">
-                Vendor-managed systems present
+                GAB maintenance partners tracked
               </span>
               <Switch
                 disabled={!canManageSettings}

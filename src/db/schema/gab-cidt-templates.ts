@@ -2,6 +2,7 @@ import {
   check,
   index,
   integer,
+  boolean,
   pgTable,
   text,
   timestamp,
@@ -20,6 +21,9 @@ export const gabCidtTemplates = pgTable(
       .references(() => organizations.id, { onDelete: "cascade" }),
     templateKey: text("template_key").notNull(),
     label: text("label").notNull(),
+    description: text("description"),
+    isDefault: boolean("is_default").notNull().default(false),
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
     cidtConfidentiality: integer("cidt_confidentiality").notNull().default(3),
     cidtIntegrity: integer("cidt_integrity").notNull().default(3),
     cidtAvailability: integer("cidt_availability").notNull().default(3),
@@ -37,10 +41,7 @@ export const gabCidtTemplates = pgTable(
       table.organizationId,
       table.templateKey
     ),
-    check(
-      "chk_gab_cidt_templates_key",
-      sql`${table.templateKey} in ('indoor_agency', 'outdoor_agency', 'outdoor_public_commercial')`
-    ),
+    check("chk_gab_cidt_templates_key_not_empty", sql`length(trim(${table.templateKey})) > 0`),
     check(
       "chk_gab_cidt_templates_cidt_range",
       sql`${table.cidtConfidentiality} between 1 and 4

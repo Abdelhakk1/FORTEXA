@@ -87,7 +87,7 @@ export function ReportsPageClient({ data }: ReportsPageClientProps) {
         <KpiCard
           label="Scheduled Reports"
           value={data.summary.scheduledReports}
-          change="Deferred for P1"
+          change="Deferred"
           changeType="neutral"
           icon={<Presentation className="h-5 w-5" />}
         />

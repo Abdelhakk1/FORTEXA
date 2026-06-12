@@ -176,6 +176,7 @@ export async function recalculateBusinessPrioritiesForOrganization(
         traceability: row.asset.cidtTraceability,
       },
       cidtOverrideEnabled: row.asset.cidtOverrideEnabled,
+      cidtTemplateKey: row.asset.cidtTemplateKey,
       gabExposureType: row.asset.gabExposureType,
       templates,
       applicationCidt,

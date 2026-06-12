@@ -24,11 +24,11 @@ export function SeverityBadge({ severity, score }: { severity: Severity; score?:
 
 /* ═══ Priority ═══ */
 const priorityConfig: Record<BusinessPriority, { className: string; label: string }> = {
-  P1: { className: "bg-red-50 text-red-700 border-red-200 dark:bg-[#3B0F0F] dark:text-[#F87171] dark:border-red-900/50", label: "P1 — Critical" },
-  P2: { className: "bg-orange-50 text-orange-700 border-orange-200 dark:bg-[#3B1F0A] dark:text-[#FB923C] dark:border-orange-900/50", label: "P2 — High" },
-  P3: { className: "bg-amber-50 text-amber-700 border-amber-200 dark:bg-[#2D2A0A] dark:text-[#FCD34D] dark:border-amber-900/50", label: "P3 — Medium" },
-  P4: { className: "bg-blue-50 text-blue-700 border-blue-200 dark:bg-[#0A1A2D] dark:text-[#60A5FA] dark:border-blue-900/50", label: "P4 — Low" },
-  P5: { className: "bg-gray-50 text-gray-500 border-gray-200 dark:bg-[#1a1a22] dark:text-[#94A3B8] dark:border-[#27272a]", label: "P5 — Minimal" },
+  P1: { className: "bg-red-50 text-red-700 border-red-200 dark:bg-[#3B0F0F] dark:text-[#F87171] dark:border-red-900/50", label: "Fix first" },
+  P2: { className: "bg-orange-50 text-orange-700 border-orange-200 dark:bg-[#3B1F0A] dark:text-[#FB923C] dark:border-orange-900/50", label: "Accelerated" },
+  P3: { className: "bg-amber-50 text-amber-700 border-amber-200 dark:bg-[#2D2A0A] dark:text-[#FCD34D] dark:border-amber-900/50", label: "Planned" },
+  P4: { className: "bg-blue-50 text-blue-700 border-blue-200 dark:bg-[#0A1A2D] dark:text-[#60A5FA] dark:border-blue-900/50", label: "Routine" },
+  P5: { className: "bg-gray-50 text-gray-500 border-gray-200 dark:bg-[#1a1a22] dark:text-[#94A3B8] dark:border-[#27272a]", label: "Routine" },
 };
 
 export function PriorityBadge({ priority }: { priority: BusinessPriority }) {
@@ -109,16 +109,34 @@ export function StatusBadge({ status }: { status: RemediationStatus | AlertStatu
 /* ═══ SLA ═══ */
 const slaConfig: Record<string, { className: string; dotColor: string }> = {
   "On Track": { className: "bg-green-50 text-green-700 border-green-200 dark:bg-[#0A2D1A] dark:text-[#4ADE80] dark:border-green-900/50", dotColor: "bg-emerald-500" },
+  "On track": { className: "bg-green-50 text-green-700 border-green-200 dark:bg-[#0A2D1A] dark:text-[#4ADE80] dark:border-green-900/50", dotColor: "bg-emerald-500" },
   "At Risk": { className: "bg-amber-50 text-amber-700 border-amber-200 dark:bg-[#2D2A0A] dark:text-[#FCD34D] dark:border-amber-900/50", dotColor: "bg-amber-500" },
+  "Due soon": { className: "bg-amber-50 text-amber-700 border-amber-200 dark:bg-[#2D2A0A] dark:text-[#FCD34D] dark:border-amber-900/50", dotColor: "bg-amber-500" },
+  "Due today": { className: "bg-orange-50 text-orange-700 border-orange-200 dark:bg-[#3B1F0A] dark:text-[#FB923C] dark:border-orange-900/50", dotColor: "bg-orange-500" },
   Overdue: { className: "bg-red-50 text-red-700 border-red-200 dark:bg-[#3B0F0F] dark:text-[#F87171] dark:border-red-900/50", dotColor: "bg-red-500" },
+  "No SLA": { className: "bg-gray-50 text-gray-600 border-gray-200 dark:bg-[#1a1a22] dark:text-[#94A3B8] dark:border-[#27272a]", dotColor: "bg-gray-400" },
 };
 
-export function SlaBadge({ status, detail }: { status: string; detail?: string }) {
-  const config = slaConfig[status] || slaConfig["On Track"];
+export function SlaBadge({
+  status,
+  detail,
+  label,
+}: {
+  status: string;
+  detail?: string;
+  label?: string;
+}) {
+  const displayText = label ?? status;
+  const configKey = /^Due in \d+ days?$/i.test(displayText)
+    ? "Due soon"
+    : displayText === "On track"
+      ? "On Track"
+      : status;
+  const config = slaConfig[configKey] || slaConfig["On Track"];
   return (
-    <Badge variant="outline" className={`font-semibold text-xs gap-1.5 rounded-full ${config.className}`}>
+    <Badge variant="outline" className={`max-w-full !h-auto min-h-5 whitespace-nowrap text-left font-semibold text-xs gap-1.5 rounded-full ${config.className}`}>
       <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${config.dotColor}`} />
-      {status}{detail ? ` (${detail})` : ""}
+      {displayText}{detail ? ` (${detail})` : ""}
     </Badge>
   );
 }

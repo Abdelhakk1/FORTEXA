@@ -8,13 +8,10 @@ import { err, ok, type ActionResult, type ResultCode } from "@/lib/errors";
 export const DIGITALOCEAN_GRADIENT_PROVIDER = "digitalocean_gradient";
 const DIGITALOCEAN_GRADIENT_TIMEOUT_MS =
   serverEnv.digitalOceanGradientTimeoutMs;
-const DIGITALOCEAN_GRADIENT_FALLBACK_MODELS = [
-  "openai-gpt-oss-120b",
-  "openai-gpt-oss-20b",
-  "minimax-m2.5",
-] as const;
+const DIGITALOCEAN_GRADIENT_TRANSIENT_RETRY_DELAY_MS = 750;
 type DigitalOceanGradientCredential =
   (typeof serverEnv.digitalOceanGradientCredentialCandidates)[number];
+type DigitalOceanGradientEndpoint = "responses" | "chat_completions";
 
 export class LocalDigitalOceanGradientTimeoutError extends Error {
   constructor(timeoutMs: number) {
@@ -692,18 +689,6 @@ function extractAssistantPayload(result: DigitalOceanGradientResponse) {
   };
 }
 
-function createModelAttemptList(primaryModel: string) {
-  const models = [primaryModel.trim()].filter(Boolean);
-
-  for (const fallbackModel of DIGITALOCEAN_GRADIENT_FALLBACK_MODELS) {
-    if (!models.includes(fallbackModel)) {
-      models.push(fallbackModel);
-    }
-  }
-
-  return models;
-}
-
 function findErrorInChain(
   error: unknown,
   predicate: (value: Error) => boolean
@@ -807,15 +792,17 @@ export function normalizeDigitalOceanGradientFailure(
     if (status === 401 || status === 403) {
       if (
         error.bodyMessage &&
-        /not available|subscription tier|model/i.test(error.bodyMessage)
+        /not available|not authorized|not allowed|subscription tier|model|access/i.test(
+          error.bodyMessage
+        )
       ) {
         return buildNormalizedError({
           resultCode: "service_unavailable",
           type: "request_rejected",
-          message: `DigitalOcean Gradient model ${model} is not available for this subscription or credential. ${error.bodyMessage}`,
+          message: `DigitalOcean Gradient model ${model} is not available or authorized for this credential. ${error.bodyMessage}`,
           status,
           model,
-          retryable: true,
+          retryable: false,
         });
       }
 
@@ -900,12 +887,36 @@ export function normalizeDigitalOceanGradientFailure(
   });
 }
 
-function shouldTryFallback(
-  failure: NormalizedDigitalOceanGradientError,
-  attemptIndex: number,
-  attemptCount: number
-) {
-  return failure.retryable && attemptIndex < attemptCount - 1;
+function delay(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isTransientProviderFailure(failure: NormalizedDigitalOceanGradientError) {
+  return (
+    failure.type === "timeout" ||
+    failure.type === "connection_failure" ||
+    failure.type === "provider_error" ||
+    failure.type === "rate_limited"
+  );
+}
+
+function shouldTryCredentialFallback(failure: NormalizedDigitalOceanGradientError) {
+  return (
+    failure.type === "auth_failure" ||
+    (failure.type === "request_rejected" &&
+      (failure.status === 401 || failure.status === 403))
+  );
+}
+
+function shouldTryEndpointFallback(failure: NormalizedDigitalOceanGradientError) {
+  return (
+    failure.type === "timeout" ||
+    failure.type === "provider_error" ||
+    failure.type === "empty_body" ||
+    failure.type === "malformed_json" ||
+    failure.type === "schema_validation_failure" ||
+    failure.type === "request_rejected"
+  );
 }
 
 function digitalOceanGradientResponsesUrl() {
@@ -978,8 +989,7 @@ export function buildDigitalOceanGradientRequestPayload(input: {
         role: "system",
         content: [
           "Return only valid JSON. Do not include markdown, prose, or code fences.",
-          `The JSON must match this schema named ${input.schemaName}:`,
-          JSON.stringify(input.schema),
+          `The JSON must match the ${input.schemaName} schema supplied in text.format.`,
           "Prefer null or [] over guessing. Keep all claims grounded in the supplied context.",
         ].join("\n"),
       },
@@ -1002,13 +1012,13 @@ function buildDigitalOceanGradientChatPayload(input: {
     model: input.model,
     temperature: 0,
     max_tokens: input.maxCompletionTokens,
+    response_format: { type: "json_object" },
     messages: [
       {
         role: "system",
         content: [
           "Return only valid JSON. Do not include markdown, prose, or code fences.",
-          `The JSON must match this schema named ${input.schemaName}:`,
-          JSON.stringify(input.schema),
+          `The JSON must include every required key for ${input.schemaName}.`,
           "Prefer null or [] over guessing. Keep all claims grounded in the supplied context.",
         ].join("\n"),
       },
@@ -1023,6 +1033,7 @@ function buildDigitalOceanGradientChatPayload(input: {
 async function sendDigitalOceanGradientStructuredRequest(input: {
   model: string;
   credential: DigitalOceanGradientCredential;
+  endpoint: DigitalOceanGradientEndpoint;
   schemaName: string;
   schema: Record<string, unknown>;
   prompt: string;
@@ -1035,7 +1046,11 @@ async function sendDigitalOceanGradientStructuredRequest(input: {
   }, DIGITALOCEAN_GRADIENT_TIMEOUT_MS);
 
   try {
-    const response = await fetch(digitalOceanGradientResponsesUrl(), {
+    const response = await fetch(
+      input.endpoint === "responses"
+        ? digitalOceanGradientResponsesUrl()
+        : digitalOceanGradientChatCompletionsUrl(),
+      {
       method: "POST",
       headers: {
         Accept: "application/json",
@@ -1043,47 +1058,28 @@ async function sendDigitalOceanGradientStructuredRequest(input: {
         "Content-Type": "application/json",
         "User-Agent": "Fortexa/1.0",
       },
-      body: JSON.stringify(buildDigitalOceanGradientRequestPayload(input)),
+      body: JSON.stringify(
+        input.endpoint === "responses"
+          ? buildDigitalOceanGradientRequestPayload(input)
+          : buildDigitalOceanGradientChatPayload(input)
+      ),
       signal: controller.signal,
-    });
+      }
+    );
 
     const body = await parseResponseBody(response);
 
-    if (!body.parsedJson) {
-      const fallbackResponse = await fetch(digitalOceanGradientChatCompletionsUrl(), {
-        method: "POST",
-        headers: {
-          Accept: "application/json",
-          Authorization: `Bearer ${input.credential.value}`,
-          "Content-Type": "application/json",
-          "User-Agent": "Fortexa/1.0",
-        },
-        body: JSON.stringify(buildDigitalOceanGradientChatPayload(input)),
-        signal: controller.signal,
-      });
-      const fallbackBody = await parseResponseBody(fallbackResponse);
-
-      if (!fallbackResponse.ok) {
-        throw new DigitalOceanGradientHttpError(
-          fallbackResponse.status,
-          fallbackBody.message
-        );
-      }
-
-      if (!fallbackBody.parsedJson) {
-        throw new DigitalOceanGradientHttpError(
-          fallbackResponse.status,
-          fallbackBody.rawText.trim()
-            ? `DigitalOcean Gradient API returned non-JSON response body: ${truncate(fallbackBody.rawText)}`
-            : "DigitalOcean Gradient API returned an empty response body."
-        );
-      }
-
-      return fallbackBody.parsedJson as DigitalOceanGradientResponse;
-    }
-
     if (!response.ok) {
       throw new DigitalOceanGradientHttpError(response.status, body.message);
+    }
+
+    if (!body.parsedJson) {
+      throw new DigitalOceanGradientHttpError(
+        response.status,
+        body.rawText.trim()
+          ? `DigitalOcean Gradient API returned non-JSON response body: ${truncate(body.rawText)}`
+          : "DigitalOcean Gradient API returned an empty response body."
+      );
     }
 
     return body.parsedJson as DigitalOceanGradientResponse;
@@ -1205,125 +1201,170 @@ async function requestStructuredDigitalOceanGradientJson<T>(input: {
     };
   }
 
-  const primaryModel = (input.model ?? serverEnv.digitalOceanGradientModel).trim();
-  const attemptModels = createModelAttemptList(primaryModel);
+  const model = (input.model ?? serverEnv.digitalOceanGradientModel).trim();
   const promptChars = input.prompt.length;
   const estimatedTokens = estimateTokenCount(promptChars);
   const maxCompletionTokens = input.maxCompletionTokens ?? 420;
+  const endpoints: DigitalOceanGradientEndpoint[] = [
+    "chat_completions",
+    "responses",
+  ];
   let lastFailure: StructuredProviderFailure | null = null;
-  const attemptCount = attemptModels.length * credentials.length;
+  let usedTransientRetry = false;
+  const attemptCount = credentials.length * endpoints.length + 1;
   let attemptNumber = 0;
 
-  for (const model of attemptModels) {
-    for (const credential of credentials) {
-      attemptNumber += 1;
-      logDigitalOceanGradientDiagnostic("info", "request_started", {
-        model,
-        attempt: attemptNumber,
-        attemptCount,
-        credentialSource: credential.source,
-        promptChars,
-        estimatedTokens,
-        maxCompletionTokens,
-      });
+  for (const credential of credentials) {
+    for (const [endpointIndex, endpoint] of endpoints.entries()) {
+      let retryCurrentEndpoint = true;
 
-      try {
-        const result = await sendDigitalOceanGradientStructuredRequest({
+      while (retryCurrentEndpoint) {
+        retryCurrentEndpoint = false;
+        attemptNumber += 1;
+        logDigitalOceanGradientDiagnostic("info", "request_started", {
           model,
-          credential,
-          schemaName: input.schemaName,
-          schema: input.schema,
-          prompt: input.prompt,
-          maxCompletionTokens,
-        });
-        const assistant = extractAssistantPayload(result);
-
-        if (!assistant.text && assistant.refusal) {
-          lastFailure = {
-            ok: false,
-            code: "server_error",
-            message: `DigitalOcean Gradient API returned a refusal instead of structured output: ${assistant.refusal}`,
-            error: buildNormalizedError({
-              resultCode: "server_error",
-              type: "empty_body",
-              message: `DigitalOcean Gradient API returned a refusal instead of structured output: ${assistant.refusal}`,
-              status: 200,
-              model,
-              retryable: false,
-            }),
-          };
-        } else {
-          const parsed = parseStructuredAssistantText({
-            text: assistant.text,
-            validator: input.validator,
-            invalidJsonMessage: input.invalidJsonMessage,
-            invalidSchemaMessage: input.invalidSchemaMessage,
-            model,
-            normalizeParsedJson: input.normalizeParsedJson,
-            missingFieldMessages: input.missingFieldMessages,
-          });
-
-          if (parsed.ok) {
-            logDigitalOceanGradientDiagnostic("info", "request_succeeded", {
-              model: result.model || model,
-              attempt: attemptNumber,
-              attemptCount,
-              status: 200,
-              responseModel: result.model || model,
-              credentialSource: credential.source,
-              promptChars,
-              estimatedTokens,
-              maxCompletionTokens,
-            });
-
-            return {
-              ok: true,
-              data: parsed.data,
-              model: result.model || model,
-              provider: DIGITALOCEAN_GRADIENT_PROVIDER,
-            };
-          }
-
-          lastFailure = {
-            ok: false,
-            code: parsed.error.resultCode,
-            message: parsed.error.message,
-            error: parsed.error,
-          };
-        }
-      } catch (error) {
-        const normalized = normalizeDigitalOceanGradientFailure(error, model);
-        lastFailure = {
-          ok: false,
-          code: normalized.resultCode,
-          message: normalized.message,
-          error: normalized,
-        };
-
-        if (
-          !(
-            error instanceof DigitalOceanGradientHttpError &&
-            [401, 403, 429].includes(error.status)
-          )
-        ) {
-          Sentry.captureException(error);
-        }
-      }
-
-      if (lastFailure) {
-        logDigitalOceanGradientDiagnostic("error", "request_failed", {
-          model,
+          endpoint,
           attempt: attemptNumber,
           attemptCount,
           credentialSource: credential.source,
-          failureType: lastFailure.error.type,
-          status: lastFailure.error.status,
           promptChars,
           estimatedTokens,
           maxCompletionTokens,
         });
 
-        if (!shouldTryFallback(lastFailure.error, attemptNumber - 1, attemptCount)) {
+        try {
+          const result = await sendDigitalOceanGradientStructuredRequest({
+            model,
+            credential,
+            endpoint,
+            schemaName: input.schemaName,
+            schema: input.schema,
+            prompt: input.prompt,
+            maxCompletionTokens,
+          });
+          const assistant = extractAssistantPayload(result);
+
+          if (!assistant.text && assistant.refusal) {
+            lastFailure = {
+              ok: false,
+              code: "server_error",
+              message: `DigitalOcean Gradient API returned a refusal instead of structured output: ${assistant.refusal}`,
+              error: buildNormalizedError({
+                resultCode: "server_error",
+                type: "empty_body",
+                message: `DigitalOcean Gradient API returned a refusal instead of structured output: ${assistant.refusal}`,
+                status: 200,
+                model,
+                retryable: false,
+              }),
+            };
+          } else {
+            const parsed = parseStructuredAssistantText({
+              text: assistant.text,
+              validator: input.validator,
+              invalidJsonMessage: input.invalidJsonMessage,
+              invalidSchemaMessage: input.invalidSchemaMessage,
+              model,
+              normalizeParsedJson: input.normalizeParsedJson,
+              missingFieldMessages: input.missingFieldMessages,
+            });
+
+            if (parsed.ok) {
+              logDigitalOceanGradientDiagnostic("info", "request_succeeded", {
+                model: result.model || model,
+                endpoint,
+                attempt: attemptNumber,
+                attemptCount,
+                status: 200,
+                responseModel: result.model || model,
+                credentialSource: credential.source,
+                promptChars,
+                estimatedTokens,
+                maxCompletionTokens,
+              });
+
+              return {
+                ok: true,
+                data: parsed.data,
+                model: result.model || model,
+                provider: DIGITALOCEAN_GRADIENT_PROVIDER,
+              };
+            }
+
+            lastFailure = {
+              ok: false,
+              code: parsed.error.resultCode,
+              message: parsed.error.message,
+              error: parsed.error,
+            };
+          }
+        } catch (error) {
+          const normalized = normalizeDigitalOceanGradientFailure(error, model);
+          lastFailure = {
+            ok: false,
+            code: normalized.resultCode,
+            message: normalized.message,
+            error: normalized,
+          };
+
+          if (
+            !(
+              error instanceof DigitalOceanGradientHttpError &&
+              [401, 403, 429].includes(error.status)
+            )
+          ) {
+            Sentry.captureException(error);
+          }
+        }
+
+        if (!lastFailure) {
+          continue;
+        }
+
+        logDigitalOceanGradientDiagnostic("error", "request_failed", {
+          model,
+          endpoint,
+          attempt: attemptNumber,
+          attemptCount,
+          credentialSource: credential.source,
+          failureType: lastFailure.error.type,
+          status: lastFailure.error.status,
+          retryable: lastFailure.error.retryable,
+          promptChars,
+          estimatedTokens,
+          maxCompletionTokens,
+        });
+
+        if (
+          isTransientProviderFailure(lastFailure.error) &&
+          !usedTransientRetry
+        ) {
+          usedTransientRetry = true;
+          await delay(DIGITALOCEAN_GRADIENT_TRANSIENT_RETRY_DELAY_MS);
+          retryCurrentEndpoint = true;
+          continue;
+        }
+
+        if (
+          endpointIndex < endpoints.length - 1 &&
+          shouldTryEndpointFallback(lastFailure.error)
+        ) {
+          break;
+        }
+
+        if (shouldTryCredentialFallback(lastFailure.error)) {
+          break;
+        }
+
+        return lastFailure;
+      }
+
+      if (lastFailure && shouldTryCredentialFallback(lastFailure.error)) {
+        break;
+      }
+
+      if (lastFailure && endpoint === "chat_completions") {
+        if (!lastFailure.error.retryable) {
           return lastFailure;
         }
       }
@@ -1340,7 +1381,7 @@ async function requestStructuredDigitalOceanGradientJson<T>(input: {
         type: "unexpected_provider_error",
         message: "DigitalOcean Gradient API failed unexpectedly while generating AI enrichment.",
         status: null,
-        model: primaryModel,
+        model,
         retryable: true,
       }),
     }

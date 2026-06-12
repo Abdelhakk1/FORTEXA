@@ -2,7 +2,7 @@ import "server-only";
 
 import * as Sentry from "@sentry/nextjs";
 import { XMLParser, XMLValidator } from "fast-xml-parser";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import {
   alerts,
@@ -39,6 +39,7 @@ import {
 import { queueAssetVulnerabilityEnrichment } from "@/lib/services/asset-vulnerability-enrichment";
 import { queueCveEnrichment } from "@/lib/services/cve-enrichment";
 import { fortexaEventNames, sendFortexaEvent } from "@/lib/services/inngest";
+import { buildRemediationCampaignSignature } from "@/lib/services/remediation-campaigns";
 import { getFortexaStorageBuckets } from "@/lib/services/storage";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
@@ -70,6 +71,7 @@ interface ObservedAsset {
   criticality: AssetCriticality;
   exposureLevel: ExposureLevel;
   gabExposureType: GabExposure;
+  cidtTemplateKey: string | null;
   cidtOverrideEnabled: boolean;
   cidtConfidentiality: number | null;
   cidtIntegrity: number | null;
@@ -228,6 +230,106 @@ const defaultReportDefinitions = [
     },
   },
 ];
+
+const enrichmentPriorityOrder: Record<BusinessPriority, number> = {
+  p1: 0,
+  p2: 1,
+  p3: 2,
+  p4: 3,
+  p5: 4,
+};
+
+async function orderAssetVulnerabilityEnrichmentCandidates(
+  db: NonNullable<ReturnType<typeof getDb>>,
+  organizationId: string,
+  assetVulnerabilityIds: string[]
+) {
+  const uniqueIds = Array.from(new Set(assetVulnerabilityIds));
+
+  if (uniqueIds.length <= 1) {
+    return uniqueIds;
+  }
+
+  const rows = await db
+    .select({
+      id: assetVulnerabilities.id,
+      businessPriority: assetVulnerabilities.businessPriority,
+      riskScore: assetVulnerabilities.riskScore,
+      slaDue: assetVulnerabilities.slaDue,
+      status: assetVulnerabilities.status,
+      cveId: cves.cveId,
+      cveTitle: cves.title,
+      remediationText: assetVulnerabilities.notes,
+      scannerFindingCode: sql<string | null>`(
+        select finding.finding_code
+        from scan_findings finding
+        where finding.organization_id = ${assetVulnerabilities.organizationId}
+          and finding.matched_asset_id = ${assetVulnerabilities.assetId}
+          and finding.matched_cve_id = ${assetVulnerabilities.cveId}
+        order by finding.last_seen desc
+        limit 1
+      )`,
+      scannerFindingTitle: sql<string | null>`(
+        select finding.title
+        from scan_findings finding
+        where finding.organization_id = ${assetVulnerabilities.organizationId}
+          and finding.matched_asset_id = ${assetVulnerabilities.assetId}
+          and finding.matched_cve_id = ${assetVulnerabilities.cveId}
+        order by finding.last_seen desc
+        limit 1
+      )`,
+    })
+    .from(assetVulnerabilities)
+    .innerJoin(cves, eq(assetVulnerabilities.cveId, cves.id))
+    .where(
+      and(
+        eq(assetVulnerabilities.organizationId, organizationId),
+        inArray(assetVulnerabilities.id, uniqueIds)
+      )
+    );
+
+  const orderedRows = rows.sort((left, right) => {
+      const priorityDelta =
+        enrichmentPriorityOrder[left.businessPriority] -
+        enrichmentPriorityOrder[right.businessPriority];
+
+      if (priorityDelta !== 0) {
+        return priorityDelta;
+      }
+
+      const riskDelta = right.riskScore - left.riskScore;
+
+      if (riskDelta !== 0) {
+        return riskDelta;
+      }
+
+      const leftDue = left.slaDue?.getTime() ?? Number.MAX_SAFE_INTEGER;
+      const rightDue = right.slaDue?.getTime() ?? Number.MAX_SAFE_INTEGER;
+
+      if (leftDue !== rightDue) {
+        return leftDue - rightDue;
+      }
+
+      return left.id.localeCompare(right.id);
+    });
+  const representatives = new Map<string, (typeof orderedRows)[number]>();
+
+  for (const row of orderedRows) {
+    const signature = buildRemediationCampaignSignature({
+      cveId: row.cveId,
+      cveTitle: row.cveTitle,
+      scannerFindingCode: row.scannerFindingCode,
+      scannerFindingTitle: row.scannerFindingTitle,
+      remediationText: row.remediationText,
+    });
+
+    if (!representatives.has(signature.key)) {
+      representatives.set(signature.key, row);
+    }
+  }
+
+  return Array.from(representatives.values()).map((row) => row.id);
+}
 
 function asArray<T>(value: T | T[] | null | undefined): T[] {
   if (Array.isArray(value)) {
@@ -389,6 +491,97 @@ function guessExposureLevel(input: {
   return "internal";
 }
 
+function hostProperty(tags: Record<string, string>, name: string) {
+  const target = name.trim().toLowerCase().replace(/_/g, "-");
+
+  for (const [key, value] of Object.entries(tags)) {
+    if (key.trim().toLowerCase().replace(/_/g, "-") === target) {
+      return value;
+    }
+  }
+
+  return null;
+}
+
+function inferGabExposureFromName(values: Array<string | null | undefined>) {
+  const haystack = values
+    .filter((value): value is string => Boolean(value))
+    .join(" ")
+    .toUpperCase();
+
+  if (/(^|[^A-Z0-9])(GAB|ATM)[-_]?OUT([^A-Z0-9]|$)/.test(haystack)) {
+    return "outdoor_agency" as GabExposure;
+  }
+
+  if (/(^|[^A-Z0-9])OUTDOOR([^A-Z0-9]|$)/.test(haystack)) {
+    return "outdoor_agency" as GabExposure;
+  }
+
+  if (/(^|[^A-Z0-9])(GAB|ATM)[-_]?(IN|IND)([^A-Z0-9]|$)/.test(haystack)) {
+    return "indoor_agency" as GabExposure;
+  }
+
+  if (/(^|[^A-Z0-9])INDOOR([^A-Z0-9]|$)/.test(haystack)) {
+    return "indoor_agency" as GabExposure;
+  }
+
+  return "unknown" as GabExposure;
+}
+
+function resolveNessusGabExposure(input: {
+  tags: Record<string, string>;
+  reportHostName: string | null;
+  hostname: string | null;
+  domain: string | null;
+  assetName: string;
+}) {
+  const exposureTag =
+    hostProperty(input.tags, "fortexa-exposure") ??
+    hostProperty(input.tags, "fortexa-gab-exposure");
+
+  if (exposureTag) {
+    const gabExposureType = normalizeGabExposureType(exposureTag);
+
+    return {
+      gabExposureType,
+      classification: {
+        source: "nessus_tag",
+        note: "Exposure classified from Nessus tag",
+        rawValue: exposureTag,
+        label: gabExposureLabels[gabExposureType],
+      },
+    };
+  }
+
+  const inferredExposure = inferGabExposureFromName([
+    input.reportHostName,
+    input.hostname,
+    input.domain,
+    hostProperty(input.tags, "host-fqdn"),
+    hostProperty(input.tags, "hostname"),
+    hostProperty(input.tags, "netbios-name"),
+    hostProperty(input.tags, "host-rdns"),
+    input.assetName,
+  ]);
+
+  if (inferredExposure !== "unknown") {
+    return {
+      gabExposureType: inferredExposure,
+      classification: {
+        source: "hostname_pattern",
+        note: "Exposure inferred from hostname pattern",
+        matchedValue: input.hostname ?? input.reportHostName ?? input.assetName,
+        label: gabExposureLabels[inferredExposure],
+      },
+    };
+  }
+
+  return {
+    gabExposureType: "unknown" as GabExposure,
+    classification: null,
+  };
+}
+
 function severityFromNessus(
   severity: unknown,
   riskFactor: unknown
@@ -426,12 +619,10 @@ function exploitMaturityFromFinding(finding: {
   if (
     title.includes("zero-day") ||
     title.includes("actively exploited") ||
-    finding.severity === "critical"
+    finding.severity === "critical" ||
+    finding.severity === "high" ||
+    finding.patchAvailable
   ) {
-    return "active_in_wild" as const;
-  }
-
-  if (finding.severity === "high" || finding.patchAvailable) {
     return "poc_available" as const;
   }
 
@@ -580,6 +771,13 @@ export function parseNessusXml(xml: string): {
     const importEndedAt = parseLooseDate(tags["HOST_END"], importStartedAt);
     const assetName = hostname ?? ipAddress ?? "Imported Asset";
     const assetType = guessAssetType(assetName, tags);
+    const gabExposure = resolveNessusGabExposure({
+      tags,
+      reportHostName,
+      hostname,
+      domain,
+      assetName,
+    });
     const findings = asArray(host.ReportItem).flatMap((entry) => {
       if (!entry || typeof entry !== "object") {
         return [];
@@ -654,7 +852,8 @@ export function parseNessusXml(xml: string): {
           domain,
           url: null,
         }),
-        gabExposureType: "unknown",
+        gabExposureType: gabExposure.gabExposureType,
+        cidtTemplateKey: null,
         cidtOverrideEnabled: false,
         cidtConfidentiality: null,
         cidtIntegrity: null,
@@ -670,6 +869,7 @@ export function parseNessusXml(xml: string): {
           operatingSystem: tags["operating-system"] ?? tags["os"] ?? null,
           externalScannerAssetId:
             tags["host-uuid"] ?? tags["bios-uuid"] ?? null,
+          exposureClassification: gabExposure.classification,
           hostProperties: tags,
         },
       },
@@ -1136,7 +1336,7 @@ async function ensureCveRows(
       .values({
         cveId,
         title: finding.title,
-        description: finding.description ?? finding.rawEvidence,
+        description: finding.description ?? null,
         severity: finding.severity,
         cvssScore:
           finding.cvssScore != null ? finding.cvssScore.toFixed(1) : null,
@@ -1208,6 +1408,8 @@ async function upsertObservedAsset(params: {
           params.observedAsset.gabExposureType !== "unknown"
             ? params.observedAsset.gabExposureType
             : matched.asset.gabExposureType,
+        cidtTemplateKey:
+          params.observedAsset.cidtTemplateKey ?? matched.asset.cidtTemplateKey,
         cidtOverrideEnabled:
           matched.asset.cidtOverrideEnabled ||
           params.observedAsset.cidtOverrideEnabled,
@@ -1271,6 +1473,7 @@ async function upsertObservedAsset(params: {
       criticality: params.observedAsset.criticality,
       exposureLevel: params.observedAsset.exposureLevel,
       gabExposureType: params.observedAsset.gabExposureType,
+      cidtTemplateKey: params.observedAsset.cidtTemplateKey,
       cidtOverrideEnabled: params.observedAsset.cidtOverrideEnabled,
       cidtConfidentiality: params.observedAsset.cidtConfidentiality,
       cidtIntegrity: params.observedAsset.cidtIntegrity,
@@ -1699,6 +1902,7 @@ export async function processScanImport(
                 traceability: matched.asset.cidtTraceability,
               },
               cidtOverrideEnabled: matched.asset.cidtOverrideEnabled,
+              cidtTemplateKey: matched.asset.cidtTemplateKey,
               gabExposureType: matched.asset.gabExposureType,
               templates,
               applicationCidt,
@@ -1964,7 +2168,14 @@ export async function processScanImport(
         }
       }
 
-      for (const assetVulnerabilityId of enrichmentAssetVulnerabilityIds) {
+      const prioritizedAssetVulnerabilityIds =
+        await orderAssetVulnerabilityEnrichmentCandidates(
+          db,
+          organizationId,
+          Array.from(enrichmentAssetVulnerabilityIds)
+        );
+
+      for (const assetVulnerabilityId of prioritizedAssetVulnerabilityIds) {
         try {
           const queued = await queueAssetVulnerabilityEnrichment(
             assetVulnerabilityId,
@@ -2245,6 +2456,7 @@ export async function importAssetsFromCsv(params: {
             ? (normalizeEnumValue(record.exposure_level) as ExposureLevel)
             : guessExposureLevel({ ipAddress, domain, url }),
         gabExposureType: classification?.gabExposureType ?? csvGabExposure,
+        cidtTemplateKey: asText(record.cidt_template_key) ?? null,
         cidtOverrideEnabled: csvHasCustomCidt,
         cidtConfidentiality: csvHasCustomCidt ? csvCidt.cidtConfidentiality : null,
         cidtIntegrity: csvHasCustomCidt ? csvCidt.cidtIntegrity : null,

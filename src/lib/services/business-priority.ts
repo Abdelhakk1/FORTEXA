@@ -7,12 +7,15 @@ export type CidtValue = 1 | 2 | 3 | 4;
 export type SensitivityLevel = "S1" | "S2" | "S3" | "S4";
 export type ApplicationProfile = 1 | 2 | 3 | 4;
 export type BusinessPriorityValue = "p1" | "p2" | "p3" | "p4" | "p5";
+export type DefaultGabCidtTemplateKey = "indoor_agency" | "outdoor_agency";
+export type LegacyGabCidtTemplateKey = "outdoor_public_commercial";
 export type GabCidtTemplateKey =
-  | "indoor_agency"
-  | "outdoor_agency"
-  | "outdoor_public_commercial";
+  | DefaultGabCidtTemplateKey
+  | LegacyGabCidtTemplateKey
+  | (string & {});
 export type GabCidtSource =
   | "custom_override"
+  | "template"
   | "exposure_template"
   | "application"
   | "system_default";
@@ -22,6 +25,7 @@ export type GabExposureType =
   | "outdoor_agency"
   | "outdoor_commercial_center"
   | "outdoor_public_street";
+export type GabExposureClass = "unknown" | "indoor" | "outdoor";
 
 export interface CidtVector {
   confidentiality: number | null | undefined;
@@ -38,12 +42,15 @@ export interface ResolvedCidtVector {
 }
 
 export interface GabCidtTemplate {
-  templateKey: GabCidtTemplateKey | string;
+  templateKey: GabCidtTemplateKey;
   label: string;
+  description?: string | null;
   cidtConfidentiality: number | null | undefined;
   cidtIntegrity: number | null | undefined;
   cidtAvailability: number | null | undefined;
   cidtTraceability: number | null | undefined;
+  isDefault?: boolean | null;
+  archivedAt?: Date | string | null;
 }
 
 export interface ResolvedGabCidtContext {
@@ -53,16 +60,20 @@ export interface ResolvedGabCidtContext {
   source: GabCidtSource;
   sourceLabel: string;
   templateKey: GabCidtTemplateKey | null;
+  templateLabel: string | null;
   isCustomOverride: boolean;
   missingContext: string[];
 }
 
 export interface BusinessPriorityFactors {
+  scoringVersion?: string;
   applicationLabel: typeof ATM_PAYMENT_SERVICES_LABEL;
   summary: string;
   technicalSeverity: string;
   cvssScore: number | null;
   exploitMaturity: string;
+  knownExploitation: boolean;
+  epssScore: number | null;
   assetSensitivity: SensitivityLevel;
   assetCidtSource: string;
   assetCidtSourceLabel: string;
@@ -70,16 +81,22 @@ export interface BusinessPriorityFactors {
   applicationSensitivity: SensitivityLevel;
   applicationProfile: `Profile ${ApplicationProfile}`;
   gabExposure: string;
+  gabExposureClass?: GabExposureClass;
+  cidtTemplateLabel?: string | null;
+  rankV2?: RankV2Result;
   businessImpact: string;
   remediationUrgency: string;
   missingContext: string[];
   scoringInputs: {
     severityScore: number;
     exploitScore: number;
+    knownExploitationScore: number;
+    epssScore: number;
     assetSensitivityScore: number;
     applicationSensitivityScore: number;
     applicationProfileScore: number;
     gabExposureScore: number;
+    legacyRiskScore?: number;
   };
 }
 
@@ -101,42 +118,69 @@ export const cidtCriterionLabels = {
 
 export const gabExposureLabels = {
   unknown: "Unknown",
-  indoor_agency: "Indoor agency GAB",
-  outdoor_agency: "Outdoor agency GAB",
-  outdoor_commercial_center: "Outdoor commercial-center GAB",
-  outdoor_public_street: "Outdoor public/street GAB",
+  indoor_agency: "Indoor GAB",
+  outdoor_agency: "Outdoor GAB",
+  outdoor_commercial_center: "Outdoor GAB",
+  outdoor_public_street: "Outdoor GAB",
 } as const satisfies Record<GabExposureType, string>;
 
 export const gabCidtTemplateLabels = {
-  indoor_agency: "Indoor agency GAB template",
-  outdoor_agency: "Outdoor agency GAB template",
-  outdoor_public_commercial: "Outdoor public/commercial GAB template",
-} as const satisfies Record<GabCidtTemplateKey, string>;
+  indoor_agency: "Default Indoor GAB CIDT template",
+  outdoor_agency: "Default Outdoor GAB CIDT template",
+} as const satisfies Record<DefaultGabCidtTemplateKey, string>;
+
+export const gabExposureClassLabels = {
+  unknown: "Unknown",
+  indoor: "Indoor GAB",
+  outdoor: "Outdoor GAB",
+} as const satisfies Record<GabExposureClass, string>;
+
+const legacyExposureLabelPatterns: Array<[RegExp, string]> = [
+  [/\bOutdoor\s+agency\s+GAB\b/gi, "Outdoor GAB"],
+  [/\bOutdoor\s+public\/commercial\s+GAB\b/gi, "Outdoor GAB"],
+  [/\bOutdoor\s+commercial[-\s]center\s+GAB\b/gi, "Outdoor GAB"],
+  [/\bOutdoor\s+public[-\s]street\s+GAB\b/gi, "Outdoor GAB"],
+  [/\bOutdoor\s+agency\b/gi, "Outdoor GAB"],
+  [/\bOutdoor\s+public\/commercial\b/gi, "Outdoor GAB"],
+  [/\bOutdoor\s+commercial[-\s]center\b/gi, "Outdoor GAB"],
+  [/\bOutdoor\s+public[-\s]street\b/gi, "Outdoor GAB"],
+  [/\bIndoor\s+agency\s+GAB\b/gi, "Indoor GAB"],
+  [/\bIndoor\s+agency\b/gi, "Indoor GAB"],
+];
+
+export function simplifyGabExposureText(value: string | null | undefined) {
+  if (!value) {
+    return "";
+  }
+
+  return legacyExposureLabelPatterns.reduce(
+    (text, [pattern, replacement]) => text.replace(pattern, replacement),
+    value
+  );
+}
 
 export const defaultGabCidtTemplates = [
   {
     templateKey: "indoor_agency",
     label: gabCidtTemplateLabels.indoor_agency,
+    description:
+      "Default business-impact CIDT preset for GABs classified as indoor.",
     cidtConfidentiality: 3,
     cidtIntegrity: 3,
     cidtAvailability: 3,
     cidtTraceability: 3,
+    isDefault: true,
   },
   {
     templateKey: "outdoor_agency",
     label: gabCidtTemplateLabels.outdoor_agency,
+    description:
+      "Default business-impact CIDT preset for GABs classified as outdoor. Exposure is scored separately.",
     cidtConfidentiality: 3,
     cidtIntegrity: 3,
-    cidtAvailability: 4,
+    cidtAvailability: 3,
     cidtTraceability: 3,
-  },
-  {
-    templateKey: "outdoor_public_commercial",
-    label: gabCidtTemplateLabels.outdoor_public_commercial,
-    cidtConfidentiality: 3,
-    cidtIntegrity: 3,
-    cidtAvailability: 4,
-    cidtTraceability: 4,
+    isDefault: true,
   },
 ] as const satisfies readonly GabCidtTemplate[];
 
@@ -156,19 +200,19 @@ const exploitScores = {
 } as const;
 
 const gabExposureScores = {
-  unknown: 45,
-  indoor_agency: 50,
+  unknown: 0,
+  indoor_agency: 45,
   outdoor_agency: 70,
-  outdoor_commercial_center: 85,
-  outdoor_public_street: 95,
+  outdoor_commercial_center: 70,
+  outdoor_public_street: 70,
 } as const satisfies Record<GabExposureType, number>;
 
 const gabExposureOrder = {
   unknown: 0,
   indoor_agency: 1,
   outdoor_agency: 2,
-  outdoor_commercial_center: 3,
-  outdoor_public_street: 4,
+  outdoor_commercial_center: 2,
+  outdoor_public_street: 2,
 } as const satisfies Record<GabExposureType, number>;
 
 const businessPriorityOrder = {
@@ -284,27 +328,62 @@ export function applicationProfileExplanation(profile: ApplicationProfile) {
 export function normalizeGabExposureType(
   value: string | null | undefined
 ): GabExposureType {
-  return value === "indoor_agency" ||
+  const normalized = value?.trim().toLowerCase().replace(/[\s-]+/g, "_");
+
+  return normalized === "indoor" ||
+    normalized === "indoor_gab" ||
+    normalized === "indoor_agency"
+    ? "indoor_agency"
+    : normalized === "outdoor" ||
+        normalized === "outdoor_gab" ||
+        normalized === "outdoor_agency" ||
+        normalized === "outdoor_commercial" ||
+        normalized === "outdoor_public_commercial" ||
+        normalized === "outdoor_commercial_center" ||
+        normalized === "outdoor_public_street"
+      ? normalized === "outdoor_commercial_center" ||
+        normalized === "outdoor_public_street"
+        ? normalized
+        : "outdoor_agency"
+      : "unknown";
+}
+
+export function normalizeGabExposureClass(
+  value: string | null | undefined
+): GabExposureClass {
+  const normalized = normalizeGabExposureType(value);
+
+  if (normalized === "indoor_agency") {
+    return "indoor";
+  }
+
+  if (
     value === "outdoor_agency" ||
-    value === "outdoor_commercial_center" ||
-    value === "outdoor_public_street"
-    ? value
-    : "unknown";
+    normalized === "outdoor_agency" ||
+    normalized === "outdoor_commercial_center" ||
+    normalized === "outdoor_public_street"
+  ) {
+    return "outdoor";
+  }
+
+  return "unknown";
 }
 
 export function isGabCidtTemplateKey(
   value: string | null | undefined
 ): value is GabCidtTemplateKey {
-  return (
-    value === "indoor_agency" ||
-    value === "outdoor_agency" ||
-    value === "outdoor_public_commercial"
-  );
+  return Boolean(value?.trim());
+}
+
+export function isDefaultGabCidtTemplateKey(
+  value: string | null | undefined
+): value is DefaultGabCidtTemplateKey {
+  return value === "indoor_agency" || value === "outdoor_agency";
 }
 
 export function gabCidtTemplateKeyForExposure(
   value: string | null | undefined
-): GabCidtTemplateKey | null {
+): DefaultGabCidtTemplateKey | null {
   const normalized = normalizeGabExposureType(value);
 
   if (normalized === "indoor_agency") {
@@ -319,7 +398,7 @@ export function gabCidtTemplateKeyForExposure(
     normalized === "outdoor_commercial_center" ||
     normalized === "outdoor_public_street"
   ) {
-    return "outdoor_public_commercial";
+    return "outdoor_agency";
   }
 
   return null;
@@ -333,7 +412,7 @@ function templateMapFromInput(templates: readonly GabCidtTemplate[] | undefined)
   }
 
   for (const template of templates ?? []) {
-    if (isGabCidtTemplateKey(template.templateKey)) {
+    if (isGabCidtTemplateKey(template.templateKey) && !template.archivedAt) {
       map.set(template.templateKey, template);
     }
   }
@@ -344,6 +423,7 @@ function templateMapFromInput(templates: readonly GabCidtTemplate[] | undefined)
 export function resolveGabCidtContext(input: {
   assetCidt?: CidtVector | null;
   cidtOverrideEnabled?: boolean | null;
+  cidtTemplateKey?: string | null;
   gabExposureType?: string | null;
   templates?: readonly GabCidtTemplate[];
   applicationCidt?: CidtVector | null;
@@ -367,6 +447,7 @@ export function resolveGabCidtContext(input: {
       source: "custom_override",
       sourceLabel: "Custom CIDT override",
       templateKey: null,
+      templateLabel: null,
       isCustomOverride: true,
       missingContext,
     };
@@ -378,9 +459,15 @@ export function resolveGabCidtContext(input: {
     );
   }
 
-  const templateKey = gabCidtTemplateKeyForExposure(input.gabExposureType);
+  const templateMap = templateMapFromInput(input.templates);
+  const selectedTemplateKey =
+    input.cidtTemplateKey && isGabCidtTemplateKey(input.cidtTemplateKey)
+      ? input.cidtTemplateKey
+      : null;
+  const templateKey =
+    selectedTemplateKey ?? gabCidtTemplateKeyForExposure(input.gabExposureType);
   if (templateKey) {
-    const template = templateMapFromInput(input.templates).get(templateKey);
+    const template = templateMap.get(templateKey);
 
     if (template) {
       const cidt = toResolvedCidtVector(
@@ -398,12 +485,19 @@ export function resolveGabCidtContext(input: {
         cidt,
         sensitivity,
         sensitivityLabel: toSensitivityLevel(sensitivity),
-        source: "exposure_template",
+        source: "template",
         sourceLabel: `Inherited from ${template.label}`,
         templateKey,
+        templateLabel: template.label,
         isCustomOverride: false,
         missingContext,
       };
+    }
+
+    if (selectedTemplateKey) {
+      missingContext.push(
+        "Selected GAB CIDT template was not found; ATM Payment Services CIDT was used."
+      );
     }
   }
 
@@ -430,6 +524,7 @@ export function resolveGabCidtContext(input: {
       source: "application",
       sourceLabel: "Inherited from ATM Payment Services",
       templateKey: null,
+      templateLabel: null,
       isCustomOverride: false,
       missingContext,
     };
@@ -461,18 +556,14 @@ export function resolveGabCidtContext(input: {
     source: "system_default",
     sourceLabel: "Using system default because business context is incomplete",
     templateKey: null,
+    templateLabel: null,
     isCustomOverride: false,
     missingContext,
   };
 }
 
 export function isOutdoorGabExposure(value: string | null | undefined) {
-  const normalized = normalizeGabExposureType(value);
-  return (
-    normalized === "outdoor_agency" ||
-    normalized === "outdoor_commercial_center" ||
-    normalized === "outdoor_public_street"
-  );
+  return normalizeGabExposureClass(value) === "outdoor";
 }
 
 export function businessPriorityFromRiskScore(
@@ -481,8 +572,7 @@ export function businessPriorityFromRiskScore(
   if (riskScore >= 90) return "p1";
   if (riskScore >= 75) return "p2";
   if (riskScore >= 60) return "p3";
-  if (riskScore >= 40) return "p4";
-  return "p5";
+  return "p4";
 }
 
 function scoreFromSensitivity(value: CidtValue) {
@@ -541,6 +631,475 @@ function slaUrgencyRank(value: string | null | undefined) {
   return slaUrgencyOrder[normalized as keyof typeof slaUrgencyOrder] ?? 0;
 }
 
+export function normalizeEpssScore(value: number | string | null | undefined) {
+  const parsed =
+    typeof value === "number" ? value : Number.parseFloat(String(value ?? ""));
+
+  if (!Number.isFinite(parsed)) {
+    return null;
+  }
+
+  return Math.max(0, Math.min(1, parsed));
+}
+
+function epssLikelihoodScore(value: number | string | null | undefined) {
+  const normalized = normalizeEpssScore(value);
+
+  return normalized == null ? 0 : Math.round(normalized * 100);
+}
+
+function effectiveExploitMaturityScore(
+  exploitMaturity: string | null | undefined,
+  knownExploitation: boolean
+) {
+  if (exploitMaturity === "active_in_wild" && !knownExploitation) {
+    return exploitScores.poc_available;
+  }
+
+  return exploitScore(exploitMaturity);
+}
+
+export interface RankV2FactorScores {
+  severity: number;
+  threat: number;
+  business: number;
+  urgency: number;
+}
+
+export interface RankV2Result {
+  algorithmVersion: "rank-v2";
+  score: number;
+  businessPriority: Exclude<BusinessPriorityValue, "p5">;
+  bucketLabel: "Fix first" | "Accelerated" | "Planned" | "Routine";
+  factorScores: RankV2FactorScores;
+  sortKey: {
+    score: number;
+    cisaKev: number;
+    exploitMaturity: number;
+    epss: number;
+    slaUrgency: number;
+    slaDayBucket: number;
+    exposure: number;
+    maxCi: number;
+    maxDt: number;
+    lifecycle: number;
+    scannerEvidence: number;
+    sourceCoverage: number;
+    firstSeenMs: number;
+    stableId: string;
+  };
+  shortReason: string;
+  explanation: string;
+  missingEvidence: string[];
+}
+
+function rankBucketFromScore(
+  score: number
+): Pick<RankV2Result, "businessPriority" | "bucketLabel"> {
+  if (score >= 90) {
+    return { businessPriority: "p1", bucketLabel: "Fix first" };
+  }
+
+  if (score >= 75) {
+    return { businessPriority: "p2", bucketLabel: "Accelerated" };
+  }
+
+  if (score >= 60) {
+    return { businessPriority: "p3", bucketLabel: "Planned" };
+  }
+
+  return { businessPriority: "p4", bucketLabel: "Routine" };
+}
+
+export function businessPriorityLabel(value: string | null | undefined) {
+  switch (normalizeBusinessPriority(value)) {
+    case "p1":
+      return "Fix first";
+    case "p2":
+      return "Accelerated";
+    case "p3":
+      return "Planned";
+    case "p4":
+    case "p5":
+    default:
+      return "Routine";
+  }
+}
+
+function severityRankV2(input: {
+  severity: string | null | undefined;
+  cvssScore?: number | null;
+}) {
+  if (typeof input.cvssScore === "number" && Number.isFinite(input.cvssScore)) {
+    return Math.max(0, Math.min(40, Math.round(input.cvssScore * 4)));
+  }
+
+  const normalized = input.severity?.toLowerCase();
+  if (normalized === "critical") return 40;
+  if (normalized === "high") return 32;
+  if (normalized === "medium") return 22;
+  if (normalized === "low") return 11;
+  return 3;
+}
+
+function exploitMaturityRank(value: string | null | undefined) {
+  switch (value) {
+    case "active_in_wild":
+      return 8;
+    case "poc_available":
+      return 6;
+    case "theoretical":
+      return 3;
+    default:
+      return 0;
+  }
+}
+
+function threatRankV2(input: {
+  knownExploitation?: boolean | null;
+  exploitMaturity?: string | null;
+  epssScore?: number | string | null;
+}) {
+  const kev = input.knownExploitation ? 14 : 0;
+  const maturity = exploitMaturityRank(input.exploitMaturity);
+  const epss = normalizeEpssScore(input.epssScore);
+  const epssComponent = epss == null ? 0 : Math.round(epss * 8);
+
+  return Math.min(30, kev + maturity + epssComponent);
+}
+
+function businessRankV2(input: {
+  assetCidt: CidtVector;
+  applicationCidt: CidtVector;
+  applicationInternetExposed: boolean;
+  gabExposureType: string | null | undefined;
+}) {
+  const assetSensitivity = calculateCidtSensitivity(
+    input.assetCidt,
+    DEFAULT_ASSET_CIDT_VALUE
+  );
+  const profile = calculateApplicationProfile({
+    isInternetExposed: input.applicationInternetExposed,
+    confidentiality: input.applicationCidt.confidentiality,
+    integrity: input.applicationCidt.integrity,
+  });
+  const sensitivityScore = { 1: 2, 2: 4, 3: 7, 4: 10 }[assetSensitivity];
+  const profileScore = { 1: 1, 2: 2, 3: 3, 4: 4 }[profile];
+  const exposureClass = normalizeGabExposureClass(input.gabExposureType);
+  const exposureScore =
+    exposureClass === "outdoor" ? 4 : exposureClass === "indoor" ? 2 : 0;
+
+  return Math.min(20, 4 + sensitivityScore + profileScore + exposureScore);
+}
+
+function daysUntil(value: Date | string | null | undefined) {
+  if (!value) {
+    return null;
+  }
+
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  return Math.ceil((date.getTime() - Date.now()) / 86_400_000);
+}
+
+export type RankV2SlaState =
+  | "overdue"
+  | "due_today"
+  | "due_soon"
+  | "on_track"
+  | "no_sla";
+
+export function getRankV2SlaState(input: {
+  slaDue?: Date | string | null;
+  slaStatus?: string | null;
+}): {
+  state: RankV2SlaState;
+  label: "Overdue" | "Due today" | "Due soon" | "On Track" | "No SLA";
+  displayLabel: string;
+  reason: string;
+  remainingDays: number | null;
+} {
+  const status = input.slaStatus?.toLowerCase().replaceAll(" ", "_");
+  const remainingDays = daysUntil(input.slaDue);
+
+  if (status === "overdue" || (remainingDays != null && remainingDays < 0)) {
+    return {
+      state: "overdue",
+      label: "Overdue",
+      displayLabel: "Overdue",
+      reason: "SLA is overdue",
+      remainingDays,
+    };
+  }
+
+  if (remainingDays === 0) {
+    return {
+      state: "due_today",
+      label: "Due today",
+      displayLabel: "Due today",
+      reason: "SLA is due today",
+      remainingDays,
+    };
+  }
+
+  if (remainingDays != null && remainingDays <= 7) {
+    return {
+      state: "due_soon",
+      label: "Due soon",
+      displayLabel:
+        remainingDays === 1
+          ? "Due in 1 day"
+          : `Due in ${remainingDays} days`,
+      reason:
+        remainingDays === 1
+          ? "SLA is due in 1 day"
+          : `SLA is due in ${remainingDays} days`,
+      remainingDays,
+    };
+  }
+
+  if (status === "at_risk") {
+    return {
+      state: "due_soon",
+      label: "Due soon",
+      displayLabel: "Due soon",
+      reason: "SLA is marked at risk",
+      remainingDays,
+    };
+  }
+
+  if (remainingDays == null && (!status || status === "not_applicable")) {
+    return {
+      state: "no_sla",
+      label: "No SLA",
+      displayLabel: "No SLA",
+      reason: "No SLA due date is set",
+      remainingDays,
+    };
+  }
+
+  return {
+    state: "on_track",
+    label: "On Track",
+    displayLabel: "On Track",
+    reason:
+      remainingDays != null
+        ? `SLA is on track with ${remainingDays} days remaining`
+        : "SLA is on track",
+    remainingDays,
+  };
+}
+
+function urgencyRankV2(input: {
+  slaDue?: Date | string | null;
+  slaStatus?: string | null;
+}) {
+  const sla = getRankV2SlaState(input);
+  const remainingDays = sla.remainingDays;
+
+  if (sla.state === "overdue") {
+    return 10;
+  }
+
+  if (sla.state === "due_today") {
+    return 9;
+  }
+
+  if (remainingDays != null) {
+    if (remainingDays <= 3) return 8;
+    if (remainingDays <= 7) return 6;
+    if (remainingDays <= 14) return 4;
+    if (remainingDays <= 30) return 2;
+  }
+
+  if (sla.state === "due_soon") return 7;
+
+  return sla.state === "on_track" ? 1 : 0;
+}
+
+function lifecycleRank(value: string | null | undefined) {
+  switch (value) {
+    case "reopened":
+      return 3;
+    case "new":
+      return 2;
+    case "open":
+      return 1;
+    default:
+      return 0;
+  }
+}
+
+function scannerEvidenceRank(input: {
+  scannerEvidenceCount?: number | null;
+  scannerEvidenceQuality?: number | null;
+}) {
+  const count = Math.min(5, Math.max(0, input.scannerEvidenceCount ?? 0));
+  const quality =
+    typeof input.scannerEvidenceQuality === "number" &&
+    Number.isFinite(input.scannerEvidenceQuality)
+      ? Math.max(0, Math.min(100, input.scannerEvidenceQuality)) / 20
+      : 0;
+
+  return Math.round(count + quality);
+}
+
+function sourceCoverageRank(input: {
+  trustedSourceCount?: number | null;
+  knownExploitation?: boolean | null;
+  epssScore?: number | string | null;
+}) {
+  return Math.min(
+    10,
+    Math.max(0, input.trustedSourceCount ?? 0) +
+      (input.knownExploitation ? 3 : 0) +
+      (normalizeEpssScore(input.epssScore) != null ? 1 : 0)
+  );
+}
+
+export function calculateRankV2(input: {
+  severity: string | null | undefined;
+  cvssScore?: number | null;
+  exploitMaturity?: string | null;
+  knownExploitation?: boolean | null;
+  epssScore?: number | string | null;
+  assetCidt: CidtVector;
+  applicationCidt: CidtVector;
+  applicationInternetExposed: boolean;
+  gabExposureType: string | null | undefined;
+  slaDue?: Date | string | null;
+  slaStatus?: string | null;
+  lifecycleStatus?: string | null;
+  scannerEvidenceCount?: number | null;
+  scannerEvidenceQuality?: number | null;
+  trustedSourceCount?: number | null;
+  firstSeen?: Date | string | null;
+  assetCode?: string | null;
+  cveId?: string | null;
+  id?: string | null;
+}): RankV2Result {
+  const severity = severityRankV2(input);
+  const threat = threatRankV2(input);
+  const business = businessRankV2(input);
+  const urgency = urgencyRankV2(input);
+  const score = Math.max(0, Math.min(100, severity + threat + business + urgency));
+  const bucket = rankBucketFromScore(score);
+  const exposureClass = normalizeGabExposureClass(input.gabExposureType);
+  const normalizedEpss = normalizeEpssScore(input.epssScore);
+  const slaState = getRankV2SlaState({
+    slaDue: input.slaDue,
+    slaStatus: input.slaStatus,
+  });
+  const firstSeen = input.firstSeen ? new Date(input.firstSeen) : null;
+  const firstSeenMs =
+    firstSeen && !Number.isNaN(firstSeen.getTime())
+      ? firstSeen.getTime()
+      : Number.MAX_SAFE_INTEGER;
+  const slaDayBucket =
+    slaState.state === "due_soon" && slaState.remainingDays != null
+      ? slaState.remainingDays
+      : Number.MAX_SAFE_INTEGER;
+  const cidt = toResolvedCidtVector(input.assetCidt, DEFAULT_ASSET_CIDT_VALUE);
+  const signals = [
+    input.knownExploitation ? "KEV" : null,
+    exposureClass === "outdoor"
+      ? "Outdoor GAB"
+      : exposureClass === "indoor"
+        ? "Indoor GAB"
+        : null,
+    normalizedEpss != null ? `EPSS ${normalizedEpss.toFixed(2)}` : null,
+    slaState.state === "overdue" ||
+    slaState.state === "due_today" ||
+    (slaState.state === "due_soon" && urgency >= 6)
+      ? slaState.displayLabel
+      : null,
+    severity >= 36 ? "critical severity" : null,
+  ].filter(Boolean) as string[];
+  const missingEvidence = [
+    normalizedEpss == null ? "EPSS probability is not available yet." : null,
+    !input.knownExploitation ? "No CISA KEV confirmation is linked." : null,
+    !input.trustedSourceCount ? "Trusted source coverage is limited." : null,
+  ].filter(Boolean) as string[];
+  const shortReason =
+    signals.length > 0
+      ? signals.slice(0, 4).join(" + ")
+      : "Deterministic severity, business, and SLA factors";
+
+  return {
+    algorithmVersion: "rank-v2",
+    score,
+    ...bucket,
+    factorScores: {
+      severity,
+      threat,
+      business,
+      urgency,
+    },
+    sortKey: {
+      score,
+      cisaKev: input.knownExploitation ? 1 : 0,
+      exploitMaturity: exploitMaturityRank(input.exploitMaturity),
+      epss: normalizedEpss == null ? 0 : Math.round(normalizedEpss * 1_000_000),
+      slaUrgency: urgency,
+      slaDayBucket,
+      exposure: exposureClass === "outdoor" ? 2 : exposureClass === "indoor" ? 1 : 0,
+      maxCi: Math.max(cidt.confidentiality, cidt.integrity),
+      maxDt: Math.max(cidt.availability, cidt.traceability),
+      lifecycle: lifecycleRank(input.lifecycleStatus),
+      scannerEvidence: scannerEvidenceRank(input),
+      sourceCoverage: sourceCoverageRank(input),
+      firstSeenMs,
+      stableId: [input.assetCode, input.cveId, input.id].filter(Boolean).join(":"),
+    },
+    shortReason,
+    explanation: `${bucket.bucketLabel} with score ${score}: Severity ${severity}, Threat ${threat}, Business ${business}, Urgency ${urgency}.`,
+    missingEvidence,
+  };
+}
+
+export function compareRankV2(
+  left: Pick<RankV2Result, "sortKey">,
+  right: Pick<RankV2Result, "sortKey">
+) {
+  const leftKey = left.sortKey;
+  const rightKey = right.sortKey;
+  const descendingKeys: Array<
+    keyof Omit<typeof leftKey, "slaDayBucket" | "firstSeenMs" | "stableId">
+  > = [
+    "score",
+    "cisaKev",
+    "exploitMaturity",
+    "epss",
+    "slaUrgency",
+    "exposure",
+    "maxCi",
+    "maxDt",
+    "lifecycle",
+  ];
+
+  for (const key of descendingKeys) {
+    const delta = rightKey[key] - leftKey[key];
+    if (delta !== 0) {
+      return delta;
+    }
+  }
+
+  const slaDayDelta = leftKey.slaDayBucket - rightKey.slaDayBucket;
+  if (slaDayDelta !== 0) {
+    return slaDayDelta;
+  }
+
+  const firstSeenDelta = leftKey.firstSeenMs - rightKey.firstSeenMs;
+  if (firstSeenDelta !== 0) {
+    return firstSeenDelta;
+  }
+
+  return leftKey.stableId.localeCompare(rightKey.stableId);
+}
+
 export function recommendedFixOrderScore(input: {
   businessPriority: string | null | undefined;
   gabExposureType: string | null | undefined;
@@ -549,9 +1108,12 @@ export function recommendedFixOrderScore(input: {
   severity: string | null | undefined;
   cvssScore?: number | null;
   exploitMaturity?: string | null;
+  knownExploitation?: boolean | null;
+  epssScore?: number | string | null;
   slaStatus?: string | null;
   riskScore?: number | null;
 }) {
+  const knownExploitation = Boolean(input.knownExploitation);
   const priorityScore =
     businessPriorityOrder[normalizeBusinessPriority(input.businessPriority)];
   const exposureScore = gabExposureOrder[normalizeGabExposureType(input.gabExposureType)];
@@ -563,7 +1125,11 @@ export function recommendedFixOrderScore(input: {
     severity: input.severity,
     cvssScore: input.cvssScore,
   });
-  const exploitabilityScore = Math.round(exploitScore(input.exploitMaturity) / 10);
+  const knownExploitationScore = knownExploitation ? 1 : 0;
+  const epssScore = epssLikelihoodScore(input.epssScore);
+  const exploitabilityScore = Math.round(
+    effectiveExploitMaturityScore(input.exploitMaturity, knownExploitation) / 10
+  );
   const slaScore = slaUrgencyRank(input.slaStatus);
   const riskScore =
     typeof input.riskScore === "number" && Number.isFinite(input.riskScore)
@@ -572,9 +1138,11 @@ export function recommendedFixOrderScore(input: {
 
   return (
     priorityScore * 1_000_000_000 +
+    knownExploitationScore * 100_000_000 +
     exposureScore * 10_000_000 +
     applicationImpactScore * 1_000_000 +
-    exploitabilityScore * 100_000 +
+    epssScore * 100_000 +
+    exploitabilityScore * 10_000 +
     severityScore * 1_000 +
     slaScore * 100 +
     riskScore
@@ -600,6 +1168,8 @@ export function calculateBusinessPriority(input: {
   severity: string | null | undefined;
   cvssScore?: number | null;
   exploitMaturity: string | null | undefined;
+  knownExploitation?: boolean | null;
+  epssScore?: number | string | null;
   assetCidt: CidtVector;
   applicationCidt: CidtVector;
   applicationInternetExposed: boolean;
@@ -622,24 +1192,43 @@ export function calculateBusinessPriority(input: {
     integrity: input.applicationCidt.integrity,
   });
   const gabExposureType = normalizeGabExposureType(input.gabExposureType);
+  const gabExposureClass = normalizeGabExposureClass(input.gabExposureType);
   const severityScore = technicalSeverityScore({
     severity: input.severity,
     cvssScore: input.cvssScore,
   });
-  const exploitabilityScore = exploitScore(input.exploitMaturity);
+  const knownExploitation = Boolean(input.knownExploitation);
+  const exploitabilityScore = effectiveExploitMaturityScore(
+    input.exploitMaturity,
+    knownExploitation
+  );
+  const knownExploitationScore = knownExploitation ? 100 : 0;
+  const epssScore = epssLikelihoodScore(input.epssScore);
   const assetSensitivityScore = scoreFromSensitivity(assetSensitivity);
   const applicationSensitivityScore = scoreFromSensitivity(applicationSensitivity);
   const applicationProfileScore = scoreFromProfile(applicationProfile);
   const gabExposureScore = gabExposureScores[gabExposureType];
-  const riskScore = clampScore(
+  const legacyRiskScore = clampScore(
     severityScore * 0.32 +
       exploitabilityScore * 0.13 +
       assetSensitivityScore * 0.15 +
       applicationSensitivityScore * 0.16 +
       applicationProfileScore * 0.12 +
-      gabExposureScore * 0.12
+      gabExposureScore * 0.12 +
+      knownExploitationScore * 0.08 +
+      epssScore * 0.05
   );
-  const businessPriority = businessPriorityFromRiskScore(riskScore);
+  const rankV2 = calculateRankV2({
+    severity: input.severity,
+    cvssScore: input.cvssScore,
+    exploitMaturity: input.exploitMaturity,
+    knownExploitation,
+    epssScore: input.epssScore,
+    assetCidt: input.assetCidt,
+    applicationCidt: input.applicationCidt,
+    applicationInternetExposed: input.applicationInternetExposed,
+    gabExposureType,
+  });
   const missingContext: string[] = [];
 
   if (input.assetCidtMissingContext?.length) {
@@ -664,12 +1253,13 @@ export function calculateBusinessPriority(input: {
   ].join(" + ");
 
   return {
-    riskScore,
-    businessPriority,
+    riskScore: rankV2.score,
+    businessPriority: rankV2.businessPriority,
     assetSensitivity,
     applicationSensitivity,
     applicationProfile,
     factors: {
+      scoringVersion: "rank-v2",
       applicationLabel: ATM_PAYMENT_SERVICES_LABEL,
       summary,
       technicalSeverity: input.severity ?? "unknown",
@@ -678,6 +1268,8 @@ export function calculateBusinessPriority(input: {
           ? input.cvssScore
           : null,
       exploitMaturity: input.exploitMaturity ?? "none",
+      knownExploitation,
+      epssScore: normalizeEpssScore(input.epssScore),
       assetSensitivity: toSensitivityLevel(assetSensitivity),
       assetCidtSource: input.assetCidtSource ?? "direct",
       assetCidtSourceLabel:
@@ -689,17 +1281,27 @@ export function calculateBusinessPriority(input: {
       applicationSensitivity: toSensitivityLevel(applicationSensitivity),
       applicationProfile: `Profile ${applicationProfile}`,
       gabExposure: gabExposureLabels[gabExposureType],
+      gabExposureClass,
+      cidtTemplateLabel:
+        input.assetCidtSource === "template" ||
+        input.assetCidtSource === "exposure_template"
+          ? input.assetCidtSourceLabel?.replace(/^Inherited from /, "") ?? null
+          : null,
+      rankV2,
       businessImpact:
-        "This GAB supports ATM Payment Services. CIDT and physical exposure influence the business impact of exploitation or outage.",
-      remediationUrgency: remediationUrgency(businessPriority),
+        "This GAB supports ATM Payment Services. CIDT describes business impact; indoor/outdoor exposure is scored separately as attack opportunity.",
+      remediationUrgency: remediationUrgency(rankV2.businessPriority),
       missingContext,
       scoringInputs: {
         severityScore,
         exploitScore: exploitabilityScore,
+        knownExploitationScore,
+        epssScore,
         assetSensitivityScore,
         applicationSensitivityScore,
         applicationProfileScore,
         gabExposureScore,
+        legacyRiskScore,
       },
     },
   };
@@ -707,12 +1309,56 @@ export function calculateBusinessPriority(input: {
 
 export function prioritySummaryFromFactors(value: unknown) {
   if (!value || typeof value !== "object") {
-    return "Priority combines scanner severity, GAB CIDT, ATM Payment Services CIDT/profile, and GAB exposure.";
+    return "Priority combines technical severity, GAB CIDT, ATM Payment Services CIDT/profile, and GAB exposure.";
   }
 
   const factors = value as Partial<BusinessPriorityFactors>;
-  return (
+  return formatPriorityFactorSummary(
     factors.summary ??
-    "Priority combines scanner severity, GAB CIDT, ATM Payment Services CIDT/profile, and GAB exposure."
+      "Priority combines technical severity, GAB CIDT, ATM Payment Services CIDT/profile, and GAB exposure."
   );
+}
+
+export function formatPriorityFactorSummary(value: string | null | undefined) {
+  const normalized = simplifyGabExposureText(value).trim();
+
+  if (!normalized) {
+    return "Priority combines technical severity, GAB CIDT, ATM Payment Services CIDT/profile, and GAB exposure.";
+  }
+
+  const parts = normalized
+    .split(/\s*\+\s*/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  if (parts.length <= 1) {
+    return normalized.endsWith(".") ? normalized : `${normalized}.`;
+  }
+
+  const readable = parts.map((part) => {
+    const lower = part.toLowerCase();
+    const gabSensitivity = part.match(/^S([1-4])\s+GAB\s+sensitivity$/i);
+    const appSensitivity = part.match(
+      /^S([1-4])\s+ATM Payment Services\s+sensitivity$/i
+    );
+
+    if (lower === "critical severity") return "Critical severity";
+    if (lower === "high severity") return "High severity";
+    if (lower === "medium severity") return "Medium severity";
+    if (lower === "low severity") return "Low severity";
+    if (gabSensitivity) {
+      return `S${gabSensitivity[1]} resolved GAB sensitivity`;
+    }
+    if (appSensitivity) {
+      return `S${appSensitivity[1]} ATM Payment Services baseline`;
+    }
+    if (/^Outdoor GAB$/i.test(part)) return "Outdoor GAB exposure";
+    if (/^Indoor GAB$/i.test(part)) return "Indoor GAB exposure";
+    if (/^Unknown$/i.test(part)) return "Unknown GAB exposure";
+    if (/^Profile\s+[1-4]$/i.test(part)) return part;
+
+    return part.charAt(0).toUpperCase() + part.slice(1);
+  });
+
+  return `${readable.join(", ")}.`;
 }

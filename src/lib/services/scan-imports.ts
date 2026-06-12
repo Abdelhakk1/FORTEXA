@@ -1,12 +1,15 @@
 import "server-only";
 
 import { z } from "zod";
-import { and, desc as drizzleDesc, eq } from "drizzle-orm";
+import { and, desc as drizzleDesc, eq, inArray } from "drizzle-orm";
 import { getDb } from "@/db";
 import {
   alerts,
+  assetVulnerabilityEnrichments,
+  assetVulnerabilities,
   assets,
   cves,
+  organizationSettings,
   profiles,
   scanFindings,
   scanImports,
@@ -30,10 +33,22 @@ import { createSignedStorageUrl, getFortexaStorageBuckets } from "./storage";
 export interface ScanImportListItem extends ScanImport {
   dbId: string;
   importedById: string | null;
+  aiEnrichment: ScanImportAiEnrichmentSummary;
+}
+
+export interface ScanImportAiEnrichmentSummary {
+  enabled: boolean;
+  total: number;
+  queued: number;
+  processing: number;
+  completed: number;
+  failed: number;
+  missing: number;
 }
 
 export interface ScanImportDetailData {
   scanImport: ScanImportListItem;
+  aiEnrichment: ScanImportAiEnrichmentSummary;
   downloadUrl: string | null;
   severityDistribution: Array<{
     label: "Critical" | "High" | "Medium" | "Low" | "Info";
@@ -84,10 +99,23 @@ export const createScanImportRecordSchema = z.object({
   organizationId: z.string().uuid(),
 });
 
-function mapScanImportRow(row: {
+const emptyAiEnrichmentSummary: ScanImportAiEnrichmentSummary = {
+  enabled: false,
+  total: 0,
+  queued: 0,
+  processing: 0,
+  completed: 0,
+  failed: 0,
+  missing: 0,
+};
+
+function mapScanImportRow(
+  row: {
   scanImport: typeof scanImports.$inferSelect;
   importedByName: string | null;
-}) {
+  },
+  aiEnrichment: ScanImportAiEnrichmentSummary = emptyAiEnrichmentSummary
+) {
   const errorDetails = normalizeScanImportErrorDetails(
     row.scanImport.errorDetails
   );
@@ -119,6 +147,7 @@ function mapScanImportRow(row: {
     errorDetails,
     status: toUiImportStatus(row.scanImport.status),
     processingTime: formatDuration(row.scanImport.processingTimeMs),
+    aiEnrichment,
   } satisfies ScanImportListItem;
 }
 
@@ -147,6 +176,80 @@ function normalizeScanImportErrorDetails(
     errors: toStringList(value.errors),
     warnings: toStringList(value.warnings),
   };
+}
+
+async function listScanImportAiEnrichmentSummaries(
+  db: NonNullable<ReturnType<typeof getDb>>,
+  organizationId: string,
+  importIds: string[]
+) {
+  const uniqueImportIds = Array.from(new Set(importIds)).filter(Boolean);
+  const summaries = new Map<string, ScanImportAiEnrichmentSummary>();
+
+  if (uniqueImportIds.length === 0) {
+    return summaries;
+  }
+
+  const [settings] = await db
+    .select({
+      aiEnabled: organizationSettings.aiEnabled,
+      aiConsentAccepted: organizationSettings.aiConsentAccepted,
+    })
+    .from(organizationSettings)
+    .where(eq(organizationSettings.organizationId, organizationId))
+    .limit(1);
+  const enabled = Boolean(settings?.aiEnabled && settings.aiConsentAccepted);
+
+  const rows = await db
+    .select({
+      importId: assetVulnerabilities.sourceScanImportId,
+      total: sql<number>`count(*)::int`,
+      queued: sql<number>`count(*) filter (where ${assetVulnerabilityEnrichments.enrichmentStatus} = 'pending')::int`,
+      processing: sql<number>`count(*) filter (where ${assetVulnerabilityEnrichments.enrichmentStatus} = 'processing')::int`,
+      completed: sql<number>`count(*) filter (where ${assetVulnerabilityEnrichments.enrichmentStatus} = 'completed')::int`,
+      failed: sql<number>`count(*) filter (where ${assetVulnerabilityEnrichments.enrichmentStatus} = 'failed')::int`,
+      missing: sql<number>`count(*) filter (where ${assetVulnerabilityEnrichments.id} is null)::int`,
+    })
+    .from(assetVulnerabilities)
+    .leftJoin(
+      assetVulnerabilityEnrichments,
+      eq(
+        assetVulnerabilities.id,
+        assetVulnerabilityEnrichments.assetVulnerabilityId
+      )
+    )
+    .where(
+      and(
+        eq(assetVulnerabilities.organizationId, organizationId),
+        inArray(assetVulnerabilities.sourceScanImportId, uniqueImportIds)
+      )
+    )
+    .groupBy(assetVulnerabilities.sourceScanImportId);
+
+  for (const importId of uniqueImportIds) {
+    summaries.set(importId, {
+      ...emptyAiEnrichmentSummary,
+      enabled,
+    });
+  }
+
+  for (const row of rows) {
+    if (!row.importId) {
+      continue;
+    }
+
+    summaries.set(row.importId, {
+      enabled,
+      total: Number(row.total ?? 0),
+      queued: Number(row.queued ?? 0),
+      processing: Number(row.processing ?? 0),
+      completed: Number(row.completed ?? 0),
+      failed: Number(row.failed ?? 0),
+      missing: Number(row.missing ?? 0),
+    });
+  }
+
+  return summaries;
 }
 
 export async function listScanImports(organizationId: string, page = 1, pageSize = 10) {
@@ -198,10 +301,20 @@ export async function listScanImports(organizationId: string, page = 1, pageSize
         ]);
 
         const summary = summaryRows[0];
+        const aiSummaries = await listScanImportAiEnrichmentSummaries(
+          db,
+          organizationId,
+          rows.map((row) => row.scanImport.id)
+        );
 
         return {
           imports: buildPaginatedResult(
-            rows.map(mapScanImportRow),
+            rows.map((row) =>
+              mapScanImportRow(
+                row,
+                aiSummaries.get(row.scanImport.id) ?? emptyAiEnrichmentSummary
+              )
+            ),
             totalRows[0]?.total ?? 0,
             pagination
           ),
@@ -361,6 +474,22 @@ export async function getScanImportDetail(
     status: toUiAlertStatus(alert.status),
   }));
 
+  const aiSummaries = await listScanImportAiEnrichmentSummaries(
+    db,
+    organizationId,
+    [importId]
+  );
+  const aiEnrichment =
+    aiSummaries.get(importId) ?? emptyAiEnrichmentSummary;
+  const aiEnrichmentStepDetail =
+    aiEnrichment.total === 0
+      ? aiEnrichment.enabled
+        ? "No linked GAB vulnerabilities required AI playbook queueing."
+        : "AI enrichment is disabled; import processing still completed."
+      : aiEnrichment.enabled
+        ? `${aiEnrichment.completed}/${aiEnrichment.total} completed, ${aiEnrichment.processing} processing, ${aiEnrichment.queued} queued, ${aiEnrichment.failed} failed.`
+        : "AI enrichment skipped because organization AI settings or consent are disabled.";
+
   const steps: ScanImportDetailData["steps"] = [
     {
       label: "File Upload",
@@ -400,6 +529,19 @@ export async function getScanImportDetail(
         scanImportRow.scanImport.status === "processing" ? "pending" : "complete",
       detail: `${mappedImport.newFindings} new, ${mappedImport.reopenedFindings} reopened, ${mappedImport.fixedFindings} fixed, ${mappedImport.unchangedFindings} unchanged`,
     },
+    {
+      label: "AI Playbook Queue",
+      status:
+        aiEnrichment.failed > 0 || (!aiEnrichment.enabled && aiEnrichment.total > 0)
+          ? "warning"
+          : aiEnrichment.total > 0 &&
+              aiEnrichment.completed === aiEnrichment.total
+            ? "complete"
+            : aiEnrichment.total > 0
+              ? "pending"
+              : "complete",
+      detail: aiEnrichmentStepDetail,
+    },
   ];
 
   const timeline = [
@@ -429,7 +571,8 @@ export async function getScanImportDetail(
   }
 
   return {
-    scanImport: mappedImport,
+    scanImport: { ...mappedImport, aiEnrichment },
+    aiEnrichment,
     downloadUrl,
     severityDistribution: [...severityDistribution],
     findings,

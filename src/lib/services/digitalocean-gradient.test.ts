@@ -17,7 +17,7 @@ import {
 } from "./digitalocean-gradient";
 
 test("default DigitalOcean Gradient model uses the accessible serverless model", () => {
-  assert.equal(DEFAULT_DIGITALOCEAN_GRADIENT_MODEL, "openai-gpt-oss-20b");
+  assert.equal(DEFAULT_DIGITALOCEAN_GRADIENT_MODEL, "deepseek-4-flash");
 });
 
 test("DigitalOcean base URL preserves the required API version path", () => {
@@ -43,7 +43,7 @@ test("DigitalOcean Gradient request shape uses the Responses API model payload",
     maxCompletionTokens: 100,
   });
 
-  assert.equal(payload.model, "openai-gpt-oss-20b");
+  assert.equal(payload.model, "deepseek-4-flash");
   assert.equal(payload.max_output_tokens, 100);
   assert.equal(payload.text.format.type, "json_schema");
   assert.equal(payload.text.format.name, "fortexa_test");

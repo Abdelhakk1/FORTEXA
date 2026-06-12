@@ -90,7 +90,7 @@ export function RemediationPageClient({
         { key: "title", label: "Task" },
         { key: "relatedCve", label: "Related CVE" },
         { key: "relatedAsset", label: "Related Asset" },
-        { key: "businessPriority", label: "Business Priority" },
+        { key: "businessPriority", label: "Fix Bucket" },
         { key: "status", label: "Status" },
         { key: "slaStatus", label: "SLA Status" },
         { key: "assignedOwner", label: "Owner" },

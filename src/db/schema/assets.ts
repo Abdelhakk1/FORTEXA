@@ -76,6 +76,7 @@ export const assets = pgTable(
     gabExposureType: gabExposureTypeEnum("gab_exposure_type")
       .notNull()
       .default("unknown"),
+    cidtTemplateKey: text("cidt_template_key"),
     cidtOverrideEnabled: boolean("cidt_override_enabled").notNull().default(false),
     cidtConfidentiality: integer("cidt_confidentiality"),
     cidtIntegrity: integer("cidt_integrity"),
@@ -125,6 +126,10 @@ export const assets = pgTable(
     index("idx_assets_org").on(table.organizationId),
     index("idx_assets_org_asset_code").on(table.organizationId, table.assetCode),
     index("idx_assets_org_gab_exposure").on(table.organizationId, table.gabExposureType),
+    index("idx_assets_org_cidt_template").on(
+      table.organizationId,
+      table.cidtTemplateKey
+    ),
     index("idx_assets_org_cidt_override").on(
       table.organizationId,
       table.cidtOverrideEnabled

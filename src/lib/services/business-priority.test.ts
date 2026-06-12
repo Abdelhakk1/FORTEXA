@@ -57,7 +57,7 @@ test("application profile follows CIDT and internet exposure rules", () => {
   );
 });
 
-test("default GAB CIDT templates match fleet exposure defaults", () => {
+test("default GAB CIDT templates keep exposure separate from business CIDT", () => {
   assert.deepEqual(
     defaultGabCidtTemplates.map((template) => ({
       key: template.templateKey,
@@ -70,8 +70,7 @@ test("default GAB CIDT templates match fleet exposure defaults", () => {
     })),
     [
       { key: "indoor_agency", cidt: [3, 3, 3, 3] },
-      { key: "outdoor_agency", cidt: [3, 3, 4, 3] },
-      { key: "outdoor_public_commercial", cidt: [3, 3, 4, 4] },
+      { key: "outdoor_agency", cidt: [3, 3, 3, 3] },
     ]
   );
 });
@@ -89,13 +88,13 @@ test("GAB CIDT inheritance reports the correct source", () => {
     },
   });
 
-  assert.equal(template.source, "exposure_template");
-  assert.equal(template.sourceLabel, "Inherited from Outdoor public/commercial GAB template");
+  assert.equal(template.source, "template");
+  assert.equal(template.sourceLabel, "Inherited from Default Outdoor GAB CIDT template");
   assert.deepEqual(template.cidt, {
     confidentiality: 3,
     integrity: 3,
-    availability: 4,
-    traceability: 4,
+    availability: 3,
+    traceability: 3,
   });
 
   const applicationFallback = resolveGabCidtContext({
@@ -274,7 +273,7 @@ test("recommended fix order keeps business priority ahead of CVSS-only severity"
   assert.ok(p1Medium > p3Critical);
 });
 
-test("recommended fix order uses known exploitation as a tie breaker", () => {
+test("recommended fix order uses confirmed KEV before scanner exploit maturity", () => {
   const shared = {
     businessPriority: "p2",
     gabExposureType: "outdoor_agency",
@@ -286,14 +285,42 @@ test("recommended fix order uses known exploitation as a tie breaker", () => {
     riskScore: 82,
   };
 
-  const theoretical = recommendedFixOrderScore({
-    ...shared,
-    exploitMaturity: "theoretical",
-  });
-  const activeInWild = recommendedFixOrderScore({
+  const scannerActiveOnly = recommendedFixOrderScore({
     ...shared,
     exploitMaturity: "active_in_wild",
+    knownExploitation: false,
+  });
+  const confirmedKev = recommendedFixOrderScore({
+    ...shared,
+    exploitMaturity: "active_in_wild",
+    knownExploitation: true,
   });
 
-  assert.ok(activeInWild > theoretical);
+  assert.ok(confirmedKev > scannerActiveOnly);
+});
+
+test("recommended fix order uses EPSS likelihood when source-backed inputs match", () => {
+  const shared = {
+    businessPriority: "p2",
+    gabExposureType: "outdoor_agency",
+    applicationSensitivity: "S4",
+    applicationProfile: "Profile 3",
+    severity: "high",
+    cvssScore: 8.1,
+    exploitMaturity: "poc_available",
+    knownExploitation: false,
+    slaStatus: "at_risk",
+    riskScore: 82,
+  };
+
+  const lowEpss = recommendedFixOrderScore({
+    ...shared,
+    epssScore: 0.05,
+  });
+  const highEpss = recommendedFixOrderScore({
+    ...shared,
+    epssScore: 0.91,
+  });
+
+  assert.ok(highEpss > lowEpss);
 });

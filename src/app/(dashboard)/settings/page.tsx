@@ -63,6 +63,8 @@ export default async function SettingsPage() {
         id: template.id,
         templateKey: template.templateKey,
         label: template.label,
+        description: template.description,
+        isDefault: template.isDefault,
         cidtConfidentiality: template.cidtConfidentiality,
         cidtIntegrity: template.cidtIntegrity,
         cidtAvailability: template.cidtAvailability,

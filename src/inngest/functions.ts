@@ -106,6 +106,7 @@ const cveEnrichmentRequested = inngest.createFunction(
 const assetVulnerabilityEnrichmentRequested = inngest.createFunction(
   {
     id: "asset-vulnerability-enrichment-requested",
+    concurrency: { limit: 2 },
     triggers: [{ event: "asset_vulnerability.enrichment.requested" }],
   },
   async ({ event }) => {
@@ -115,6 +116,10 @@ const assetVulnerabilityEnrichmentRequested = inngest.createFunction(
       typeof event.data.assetVulnerabilityId === "string"
         ? event.data.assetVulnerabilityId
         : null;
+    const organizationId =
+      typeof event.data.organizationId === "string"
+        ? event.data.organizationId
+        : undefined;
 
     if (!assetVulnerabilityId) {
       return {
@@ -126,6 +131,7 @@ const assetVulnerabilityEnrichmentRequested = inngest.createFunction(
 
     const result = await runAssetVulnerabilityEnrichment(assetVulnerabilityId, {
       force: Boolean(event.data.force),
+      organizationId,
       triggerSource:
         event.data.triggerSource === "automatic_import" ||
         event.data.triggerSource === "automatic_page_open" ||

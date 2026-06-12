@@ -36,18 +36,13 @@ interface AssetsPageClientProps {
 
 const gabExposureOptions = [
   { value: "unknown", label: "Unknown" },
-  { value: "indoor_agency", label: "Indoor agency GAB" },
-  { value: "outdoor_agency", label: "Outdoor agency GAB" },
-  { value: "outdoor_commercial_center", label: "Outdoor commercial-center GAB" },
-  { value: "outdoor_public_street", label: "Outdoor public/street GAB" },
+  { value: "indoor_agency", label: "Indoor GAB" },
+  { value: "outdoor_agency", label: "Outdoor GAB" },
 ];
 
 function templateKeyForExposure(value: string) {
   if (value === "indoor_agency") return "indoor_agency";
   if (value === "outdoor_agency") return "outdoor_agency";
-  if (value === "outdoor_commercial_center" || value === "outdoor_public_street") {
-    return "outdoor_public_commercial";
-  }
   return null;
 }
 
@@ -66,15 +61,17 @@ export function AssetsPageClient({ data, filters }: AssetsPageClientProps) {
     criticality: "medium",
     exposureLevel: "internal",
     gabExposureType: "unknown",
+    cidtTemplateKey: "",
     status: "active",
   });
   const [selectedAssetCodes, setSelectedAssetCodes] = useState<Set<string>>(
     () => new Set()
   );
   const [bulkOperation, setBulkOperation] = useState<
-    "set_exposure" | "apply_template" | "clear_custom_override" | "copy_cidt_from_asset"
+    "set_exposure" | "apply_template" | "clear_custom_override" | "clear_template" | "copy_cidt_from_asset"
   >("apply_template");
   const [bulkExposure, setBulkExposure] = useState("indoor_agency");
+  const [bulkTemplateKey, setBulkTemplateKey] = useState("");
   const [bulkSourceAssetCode, setBulkSourceAssetCode] = useState("");
   const [formMessage, setFormMessage] = useState<string | null>(null);
   const [csvMessage, setCsvMessage] = useState<string | null>(null);
@@ -137,19 +134,21 @@ export function AssetsPageClient({ data, filters }: AssetsPageClientProps) {
     data.assets.items.every((asset) => selectedAssetCodes.has(asset.id));
   const selectedAssetCodeList = Array.from(selectedAssetCodes);
   const selectedExposurePreview = useMemo(() => {
-    const templateKey = templateKeyForExposure(formState.gabExposureType);
+    const templateKey =
+      formState.cidtTemplateKey || templateKeyForExposure(formState.gabExposureType);
     const template = templateKey
       ? data.gabCidtTemplates.find((row) => row.templateKey === templateKey)
       : null;
 
     if (template) {
-      return `Resolved CIDT: C${template.cidtConfidentiality} I${template.cidtIntegrity} D${template.cidtAvailability} T${template.cidtTraceability} (${template.sensitivity}) from ${template.label}`;
+      return `Resolved CIDT: C${template.cidtConfidentiality} I${template.cidtIntegrity} D${template.cidtAvailability} T${template.cidtTraceability} (${template.sensitivity}) from ${template.label}. Exposure stays ${gabExposureOptions.find((option) => option.value === formState.gabExposureType)?.label ?? "Unknown"}.`;
     }
 
     return `Resolved CIDT: C${data.atmPaymentServicesCidt.cidtConfidentiality} I${data.atmPaymentServicesCidt.cidtIntegrity} D${data.atmPaymentServicesCidt.cidtAvailability} T${data.atmPaymentServicesCidt.cidtTraceability} (${data.atmPaymentServicesCidt.sensitivity}) from ATM Payment Services`;
   }, [
     data.atmPaymentServicesCidt,
     data.gabCidtTemplates,
+    formState.cidtTemplateKey,
     formState.gabExposureType,
   ]);
 
@@ -188,7 +187,7 @@ export function AssetsPageClient({ data, filters }: AssetsPageClientProps) {
         { key: "id", label: "Asset ID" },
         { key: "name", label: "Name" },
         { key: "type", label: "Type" },
-        { key: "branch", label: "Branch" },
+        { key: "branch", label: "Coverage Area" },
         { key: "region", label: "Region" },
         { key: "criticality", label: "Criticality" },
         { key: "exposureLevel", label: "Network Exposure" },
@@ -218,6 +217,7 @@ export function AssetsPageClient({ data, filters }: AssetsPageClientProps) {
         exposureLevel: formState.exposureLevel as Parameters<typeof createAssetAction>[0]["exposureLevel"],
         gabExposureType:
           formState.gabExposureType as Parameters<typeof createAssetAction>[0]["gabExposureType"],
+        cidtTemplateKey: formState.cidtTemplateKey || undefined,
         status: formState.status as Parameters<typeof createAssetAction>[0]["status"],
         regionId: formState.regionId === "all" ? null : formState.regionId,
       });
@@ -236,6 +236,7 @@ export function AssetsPageClient({ data, filters }: AssetsPageClientProps) {
         criticality: "medium",
         exposureLevel: "internal",
         gabExposureType: "unknown",
+        cidtTemplateKey: "",
         status: "active",
       });
       setFormMessage("Asset created successfully.");
@@ -251,11 +252,13 @@ export function AssetsPageClient({ data, filters }: AssetsPageClientProps) {
         assetCodes: selectedAssetCodeList,
         operation: bulkOperation,
         gabExposureType:
-          bulkOperation === "set_exposure" || bulkOperation === "apply_template"
+          bulkOperation === "set_exposure"
             ? (bulkExposure as Parameters<
                 typeof bulkUpdateAssetClassificationAction
               >[0]["gabExposureType"])
             : undefined,
+        cidtTemplateKey:
+          bulkOperation === "apply_template" ? bulkTemplateKey : undefined,
         sourceAssetCode:
           bulkOperation === "copy_cidt_from_asset" ? bulkSourceAssetCode : undefined,
       });
@@ -356,7 +359,7 @@ export function AssetsPageClient({ data, filters }: AssetsPageClientProps) {
                     ))}
                   </SelectContent>
                 </Select>
-                <input value={formState.branch} onChange={(event) => setFormState((current) => ({ ...current, branch: event.target.value }))} placeholder="Branch" className="h-10 rounded-lg border border-[#E9ECEF] bg-[#F9FAFB] px-3 text-sm text-[#1A1A2E] outline-none focus:border-[#93C5FD] dark:border-[#27272a] dark:bg-[#1a1a22] dark:text-[#fafafa]" />
+                <input value={formState.branch} onChange={(event) => setFormState((current) => ({ ...current, branch: event.target.value }))} placeholder="Coverage area" className="h-10 rounded-lg border border-[#E9ECEF] bg-[#F9FAFB] px-3 text-sm text-[#1A1A2E] outline-none focus:border-[#93C5FD] dark:border-[#27272a] dark:bg-[#1a1a22] dark:text-[#fafafa]" />
                 <input value={formState.ipAddress} onChange={(event) => setFormState((current) => ({ ...current, ipAddress: event.target.value }))} placeholder="IP address" className="h-10 rounded-lg border border-[#E9ECEF] bg-[#F9FAFB] px-3 text-sm text-[#1A1A2E] outline-none focus:border-[#93C5FD] dark:border-[#27272a] dark:bg-[#1a1a22] dark:text-[#fafafa]" />
                 <Select value={formState.criticality} onValueChange={(value) => setFormState((current) => ({ ...current, criticality: value || "medium" }))}>
                   <SelectTrigger className="h-10 border-[#E9ECEF] bg-[#F9FAFB] text-[#1A1A2E] dark:border-[#27272a] dark:bg-[#1a1a22] dark:text-[#fafafa]"><SelectValue placeholder="Criticality" /></SelectTrigger>
@@ -372,6 +375,17 @@ export function AssetsPageClient({ data, filters }: AssetsPageClientProps) {
                     {gabExposureOptions.map((option) => (
                       <SelectItem key={option.value} value={option.value}>
                         {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select value={formState.cidtTemplateKey || "default"} onValueChange={(value) => setFormState((current) => ({ ...current, cidtTemplateKey: value === "default" ? "" : value || "" }))}>
+                  <SelectTrigger className="h-10 border-[#E9ECEF] bg-[#F9FAFB] text-[#1A1A2E] dark:border-[#27272a] dark:bg-[#1a1a22] dark:text-[#fafafa]"><SelectValue placeholder="CIDT template" /></SelectTrigger>
+                  <SelectContent className="border-[#E9ECEF] bg-white dark:border-[#27272a] dark:bg-[#141419]">
+                    <SelectItem value="default">Default for exposure</SelectItem>
+                    {data.gabCidtTemplates.map((template) => (
+                      <SelectItem key={template.templateKey} value={template.templateKey}>
+                        {template.label}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -400,7 +414,7 @@ export function AssetsPageClient({ data, filters }: AssetsPageClientProps) {
               />
               <div className="rounded-xl border border-dashed border-[#D1D5DB] p-4 dark:border-[#3a3a42]">
                 <p className="text-sm font-medium text-[#1A1A2E] dark:text-[#fafafa]">CSV column contract</p>
-                <p className="mt-1 text-xs text-[#6B7280] dark:text-[#94A3B8]">Supported columns: asset_code, name, type, hostname, ip_address, domain, region_code, criticality, gab_exposure_type, cidt_confidentiality, cidt_integrity, cidt_availability, cidt_traceability, owner_email, owner_id, branch, manufacturer, model, location, os_version, status.</p>
+                <p className="mt-1 text-xs text-[#6B7280] dark:text-[#94A3B8]">Supported columns: asset_code, name, type, hostname, ip_address, domain, region_code, criticality, gab_exposure_type, cidt_template_key, cidt_confidentiality, cidt_integrity, cidt_availability, cidt_traceability, owner_email, owner_id, coverage area, manufacturer, model, location, os_version, status.</p>
                 <Button type="button" onClick={() => csvInputRef.current?.click()} disabled={isImportingCsv} className="mt-3 gradient-accent border-0 text-white">
                   <Upload className="mr-2 h-4 w-4" /> {isImportingCsv ? "Importing..." : "Choose CSV"}
                 </Button>
@@ -482,7 +496,7 @@ export function AssetsPageClient({ data, filters }: AssetsPageClientProps) {
       <Card className="mb-4 border border-[#E9ECEF] bg-white p-4 dark:border-[#27272a] dark:bg-[#141419]">
         <div className="flex flex-wrap items-center gap-3">
           <SearchInput
-            placeholder="Search assets, IDs, branches..."
+            placeholder="Search GABs, IDs, coverage areas..."
             value={filters.search}
             onChange={(value) => updateFilters({ search: value, page: 1 })}
             className="w-full sm:w-64"
@@ -586,10 +600,11 @@ export function AssetsPageClient({ data, filters }: AssetsPageClientProps) {
                 <SelectItem value="apply_template">Apply CIDT template</SelectItem>
                 <SelectItem value="set_exposure">Set exposure only</SelectItem>
                 <SelectItem value="clear_custom_override">Clear custom CIDT</SelectItem>
+                <SelectItem value="clear_template">Return to default template</SelectItem>
                 <SelectItem value="copy_cidt_from_asset">Copy CIDT from GAB</SelectItem>
               </SelectContent>
             </Select>
-            {bulkOperation === "apply_template" || bulkOperation === "set_exposure" ? (
+            {bulkOperation === "set_exposure" ? (
               <Select value={bulkExposure} onValueChange={(value) => setBulkExposure(value || "indoor_agency")}>
                 <SelectTrigger className="h-9 w-full border-[#BFDBFE] bg-white text-[#1A1A2E] dark:border-[#1d4ed8]/60 dark:bg-[#141419] dark:text-[#fafafa] sm:w-[240px]">
                   <SelectValue />
@@ -598,6 +613,20 @@ export function AssetsPageClient({ data, filters }: AssetsPageClientProps) {
                   {gabExposureOptions.map((option) => (
                     <SelectItem key={`bulk-${option.value}`} value={option.value}>
                       {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            ) : null}
+            {bulkOperation === "apply_template" ? (
+              <Select value={bulkTemplateKey} onValueChange={(value) => setBulkTemplateKey(value || "")}>
+                <SelectTrigger className="h-9 w-full border-[#BFDBFE] bg-white text-[#1A1A2E] dark:border-[#1d4ed8]/60 dark:bg-[#141419] dark:text-[#fafafa] sm:w-[260px]">
+                  <SelectValue placeholder="CIDT template" />
+                </SelectTrigger>
+                <SelectContent className="border-[#E9ECEF] bg-white dark:border-[#27272a] dark:bg-[#141419]">
+                  {data.gabCidtTemplates.map((template) => (
+                    <SelectItem key={`bulk-template-${template.templateKey}`} value={template.templateKey}>
+                      {template.label}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -681,7 +710,7 @@ export function AssetsPageClient({ data, filters }: AssetsPageClientProps) {
                 </div>
                 <div className="mt-4 grid grid-cols-2 gap-3 text-xs">
                   <div>
-                    <p className="mb-1 text-[#9CA3AF] dark:text-[#64748B]">Branch</p>
+                    <p className="mb-1 text-[#9CA3AF] dark:text-[#64748B]">Coverage area</p>
                     <p className="text-[#1A1A2E] dark:text-[#fafafa]">{asset.branch}</p>
                   </div>
                   <div>
@@ -719,7 +748,7 @@ export function AssetsPageClient({ data, filters }: AssetsPageClientProps) {
                         className="h-4 w-4 rounded border-[#D1D5DB]"
                       />
                     </th>
-                    {["Asset ID", "Name / Model", "Type", "Branch / Region", "Criticality", "GAB Exposure", "Vulns", "Max Severity", "Priority", "Status", "Actions"].map((heading) => (
+                    {["Asset ID", "Name / Model", "Type", "Coverage / Region", "Criticality", "GAB Exposure", "Vulns", "Max Severity", "Priority", "Status", "Actions"].map((heading) => (
                       <th key={heading} className="whitespace-nowrap px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-[#6B7280] dark:text-[#94A3B8]">{heading}</th>
                     ))}
                   </tr>

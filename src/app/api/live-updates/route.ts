@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getCurrentIdentity } from "@/lib/auth";
 import type { AppPermission } from "@/lib/permissions";
 import { startServerTiming } from "@/lib/observability/timing";
+import { getActiveOrganizationForUser } from "@/lib/services/organizations";
 import {
   getProtectedAreaLiveToken,
   toLiveScope,
@@ -40,28 +41,6 @@ export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
     const scope = toLiveScope(searchParams.get("scope"));
-    const rateLimit = checkRateLimit({
-      key: `live-updates:${scope}:${getClientIp(request)}`,
-      limit: 60,
-      windowMs: 60_000,
-    });
-
-    if (!rateLimit.allowed) {
-      timing.end({ authenticated: false, statusCode: 429, scope });
-      return NextResponse.json(
-        { error: "rate_limited" },
-        {
-          status: 429,
-          headers: {
-            "Retry-After": String(
-              getRateLimitRetryAfterSeconds(rateLimit.resetAt)
-            ),
-            "Cache-Control": "no-store, max-age=0",
-          },
-        }
-      );
-    }
-
     const identity = await getCurrentIdentity();
 
     if (identity.status === "anonymous") {
@@ -77,11 +56,46 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "forbidden" }, { status: 403 });
     }
 
-    const token = await getProtectedAreaLiveToken(scope);
+    const activeOrganization = identity.user?.id
+      ? await getActiveOrganizationForUser(identity.user.id)
+      : null;
+
+    if (!activeOrganization) {
+      timing.end({ authenticated: true, statusCode: 403, scope });
+      return NextResponse.json({ error: "forbidden" }, { status: 403 });
+    }
+
+    const rateLimit = checkRateLimit({
+      key: `live-updates:${scope}:${activeOrganization.organization.id}:${identity.user?.id ?? getClientIp(request)}`,
+      limit: 60,
+      windowMs: 60_000,
+    });
+
+    if (!rateLimit.allowed) {
+      timing.end({ authenticated: true, statusCode: 429, scope });
+      return NextResponse.json(
+        { error: "rate_limited" },
+        {
+          status: 429,
+          headers: {
+            "Retry-After": String(
+              getRateLimitRetryAfterSeconds(rateLimit.resetAt)
+            ),
+            "Cache-Control": "no-store, max-age=0",
+          },
+        }
+      );
+    }
+
+    const token = await getProtectedAreaLiveToken(
+      scope,
+      activeOrganization.organization.id
+    );
     timing.end({
       authenticated: true,
       statusCode: 200,
       scope,
+      organizationId: activeOrganization.organization.id,
     });
 
     return NextResponse.json(

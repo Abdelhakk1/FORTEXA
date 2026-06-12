@@ -46,6 +46,7 @@ import {
   updateAtmPaymentServicesApplication,
 } from "@/lib/services/business-applications";
 import {
+  applyAssetClassificationRulesToUnknownAssets,
   assetClassificationRulesSettingsSchema,
   gabCidtTemplatesSettingsSchema,
   replaceAssetClassificationRules,
@@ -297,22 +298,64 @@ export async function updateGabCidtTemplatesAction(input: unknown) {
   }
 }
 
-export async function updateAssetClassificationRulesAction(input: unknown) {
+export async function updateAssetClassificationRulesAction(input: unknown): Promise<
+  ActionResult<{
+    id: string;
+    classifiedAssets: number;
+    rules: Array<{
+      id: string;
+      name: string;
+      field: string;
+      matchValue: string;
+      gabExposureType: string;
+      enabled: boolean;
+    }>;
+  }>
+> {
   try {
     const { identity, active } = await getSettingsActionContext();
     const parsed = assetClassificationRulesSettingsSchema.parse(input);
-    await replaceAssetClassificationRules(active.organization.id, parsed);
-    await logAuditEvent({
-      organizationId: active.organization.id,
-      userId: identity.profile?.id ?? null,
-      action: "settings.asset_classification_rules_updated",
-      resourceType: "asset_classification_rules",
-      resourceId: active.organization.id,
-      details: { rules: parsed.rules.length },
-    });
+    const rules = await replaceAssetClassificationRules(active.organization.id, parsed);
+    const classifiedAssets = await applyAssetClassificationRulesToUnknownAssets(
+      active.organization.id
+    );
+    await recalculateBusinessPrioritiesForOrganization(active.organization.id);
+    try {
+      await logAuditEvent({
+        organizationId: active.organization.id,
+        userId: identity.profile?.id ?? null,
+        action: "settings.asset_classification_rules_updated",
+        resourceType: "asset_classification_rules",
+        resourceId: active.organization.id,
+        details: { rules: rules.length, classifiedAssets },
+      });
+    } catch (auditError) {
+      console.warn("[settings.assetClassificationRules] audit log skipped", {
+        error:
+          auditError instanceof Error ? auditError.message : String(auditError),
+      });
+    }
     revalidatePath("/settings");
-    return ok({ id: active.organization.id });
+    revalidatePath("/assets");
+    revalidatePath("/vulnerabilities");
+    revalidatePath("/dashboard");
+    revalidatePath("/reports");
+    return ok({
+      id: active.organization.id,
+      classifiedAssets,
+      rules: rules.map((rule) => ({
+        id: rule.id,
+        name: rule.name,
+        field: rule.field,
+        matchValue: rule.matchValue,
+        gabExposureType: rule.gabExposureType,
+        enabled: rule.enabled,
+      })),
+    });
   } catch (error) {
+    console.error("[settings.assetClassificationRules] failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
     return toActionResult(error);
   }
 }

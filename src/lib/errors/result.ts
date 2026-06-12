@@ -6,6 +6,13 @@ export type ResultCode =
   | "forbidden"
   | "not_found"
   | "rate_limited"
+  | "ai_disabled"
+  | "consent_missing"
+  | "worker_not_configured"
+  | "provider_config_missing"
+  | "provider_failed"
+  | "database_error"
+  | "permission_denied"
   | "server_error"
   | "service_unavailable";
 

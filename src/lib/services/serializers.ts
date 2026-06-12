@@ -71,7 +71,7 @@ const vulnerabilityStatusMap = {
 } as const satisfies Record<string, VulnerabilityStatus>;
 
 const exploitMaturityMap = {
-  active_in_wild: "Active in Wild (KEV)",
+  active_in_wild: "Active in Wild",
   poc_available: "POC Available",
   theoretical: "Theoretical",
   none: "None",
@@ -79,20 +79,20 @@ const exploitMaturityMap = {
 
 const scannerSourceMap = {
   nessus: "Nessus",
-  openvas: "OpenVAS",
-  nmap: "Nmap",
-  qualys: "Qualys",
-  other: "Other",
+  openvas: "Nessus",
+  nmap: "Nessus",
+  qualys: "Nessus",
+  other: "Nessus",
 } as const;
 
 const assetTypeMap = {
   atm: "ATM",
   gab: "GAB",
-  kiosk: "Kiosk",
-  server: "Server",
-  network_device: "Network Device",
-  workstation: "Workstation",
-  other: "Other",
+  kiosk: "GAB",
+  server: "GAB",
+  network_device: "GAB",
+  workstation: "GAB",
+  other: "GAB",
 } as const;
 
 const exposureLevelMap = {
@@ -171,11 +171,14 @@ export function toUiVulnerabilityStatus(
 }
 
 export function toUiExploitMaturity(
-  value: string | null | undefined
+  value: string | null | undefined,
+  options?: { confirmedCisaKev?: boolean }
 ): ExploitMaturity {
-  return (
-    exploitMaturityMap[value as keyof typeof exploitMaturityMap] ?? "None"
-  );
+  if (value === "active_in_wild" && options?.confirmedCisaKev) {
+    return "Active in Wild (KEV)";
+  }
+
+  return exploitMaturityMap[value as keyof typeof exploitMaturityMap] ?? "None";
 }
 
 export function toUiScannerSource(value: string | null | undefined) {

@@ -1,15 +1,131 @@
 "use server";
 
+import * as Sentry from "@sentry/nextjs";
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { logAuditEvent } from "@/lib/audit";
 import { requireActiveOrganization, requirePermission } from "@/lib/auth";
-import { ok, toActionResult, type ActionResult } from "@/lib/errors";
+import { err, ok, toActionResult, type ActionResult } from "@/lib/errors";
 import { measureServerTiming } from "@/lib/observability/timing";
 import {
-  runAssetVulnerabilityEnrichment,
+  processPendingAssetVulnerabilityEnrichments,
+  queueAssetVulnerabilityEnrichment,
 } from "@/lib/services/asset-vulnerability-enrichment";
 import { updateAssetVulnerabilityStatus } from "@/lib/services/asset-vulnerabilities";
 import { updateAiSettings } from "@/lib/services/organizations";
+
+type AssetVulnerabilityEnrichmentActionData = {
+  assetVulnerabilityId: string;
+  mode: "queued" | "skipped";
+  status:
+    | "queued"
+    | "already_processing"
+    | "already_queued"
+    | "fresh_completed"
+    | "recent_failure_cooldown"
+    | "automatic_retry_limit";
+  message: string;
+};
+
+function queueStatusMessage(
+  status: AssetVulnerabilityEnrichmentActionData["status"]
+) {
+  switch (status) {
+    case "queued":
+      return "AI enrichment queued in the background.";
+    case "already_processing":
+      return "AI enrichment is already processing.";
+    case "already_queued":
+      return "AI enrichment is already queued.";
+    case "fresh_completed":
+      return "A fresh AI enrichment already exists.";
+    case "recent_failure_cooldown":
+      return "AI enrichment failed recently. Retry will be available after the cooldown.";
+    case "automatic_retry_limit":
+      return "Automatic AI enrichment reached the retry limit. Use manual retry after reviewing the failure.";
+    default:
+      return "AI enrichment state updated.";
+  }
+}
+
+function logActionException(
+  action: string,
+  error: unknown,
+  details: Record<string, unknown>
+) {
+  Sentry.captureException(error);
+  console.error("[asset-vulnerability-action]", {
+    action,
+    ...details,
+    errorName: error instanceof Error ? error.name : "unknown",
+    message:
+      error instanceof Error
+        ? error.message.slice(0, 240)
+        : "Unknown server action failure",
+  });
+}
+
+async function logAuditEventSafe(
+  action: string,
+  input: Parameters<typeof logAuditEvent>[0]
+) {
+  try {
+    await logAuditEvent(input);
+  } catch (error) {
+    logActionException(`${action}.audit_failed`, error, {
+      organizationId: input.organizationId ?? null,
+      userId: input.userId ?? null,
+      resourceType: input.resourceType,
+      resourceId: input.resourceId,
+    });
+  }
+}
+
+function revalidatePathSafe(action: string, path: string) {
+  try {
+    revalidatePath(path);
+  } catch (error) {
+    logActionException(`${action}.revalidate_failed`, error, { path });
+  }
+}
+
+function wakeAssetVulnerabilityEnrichmentProcessor(input: {
+  action: string;
+  organizationId: string;
+  assetVulnerabilityId: string;
+}) {
+  try {
+    after(async () => {
+      try {
+        const result = await processPendingAssetVulnerabilityEnrichments({
+          organizationId: input.organizationId,
+          limit: 1,
+          triggerSource: "background_retry",
+        });
+
+        console.info("[asset-vulnerability-action]", {
+          action: `${input.action}.processor_wake_finished`,
+          organizationId: input.organizationId,
+          assetVulnerabilityId: input.assetVulnerabilityId,
+          ok: result.ok,
+          code: result.ok ? "ok" : result.code,
+          result: result.ok ? result.data : null,
+          message: result.ok ? null : result.message.slice(0, 240),
+        });
+      } catch (error) {
+        logActionException(`${input.action}.processor_wake_failed`, error, {
+          organizationId: input.organizationId,
+          assetVulnerabilityId: input.assetVulnerabilityId,
+        });
+      }
+    });
+  } catch (error) {
+    logActionException(`${input.action}.processor_wake_schedule_failed`, error, {
+      organizationId: input.organizationId,
+      assetVulnerabilityId: input.assetVulnerabilityId,
+    });
+  }
+}
 
 export async function enableAiPlaybooksAction(): Promise<
   ActionResult<{ enabled: true }>
@@ -27,7 +143,7 @@ export async function enableAiPlaybooksAction(): Promise<
           dataPolicy: "minimal_evidence",
         });
 
-        await logAuditEvent({
+        await logAuditEventSafe("organization.enable_ai_playbooks", {
           organizationId: activeOrganization.organization.id,
           userId: identity.profile?.id ?? null,
           action: "organization.ai_playbooks_enabled",
@@ -36,7 +152,7 @@ export async function enableAiPlaybooksAction(): Promise<
           details: { source: "just_in_time_consent" },
         });
 
-        revalidatePath("/settings");
+        revalidatePathSafe("organization.enable_ai_playbooks", "/settings");
         return ok({ enabled: true });
       } catch (error) {
         return toActionResult(error);
@@ -50,12 +166,7 @@ export async function enableAiPlaybooksAction(): Promise<
 export async function retryAssetVulnerabilityEnrichmentAction(input: {
   assetVulnerabilityId: string;
   force?: boolean;
-}): Promise<
-  ActionResult<{
-    assetVulnerabilityId: string;
-    mode: "queued" | "inline";
-  }>
-> {
+}): Promise<ActionResult<AssetVulnerabilityEnrichmentActionData>> {
   return measureServerTiming(
     "action.assetVulnerabilities.retryEnrichment",
     async () => {
@@ -63,43 +174,72 @@ export async function retryAssetVulnerabilityEnrichmentAction(input: {
         const identity = await requirePermission("cves.enrich");
         const activeOrganization = await requireActiveOrganization();
 
-        const inline = await runAssetVulnerabilityEnrichment(
+        const queued = await queueAssetVulnerabilityEnrichment(
           input.assetVulnerabilityId,
-        {
-          force: input.force ?? true,
-          organizationId: activeOrganization.organization.id,
-          triggerSource: "manual_retry",
-        }
-      );
+          {
+            force: input.force ?? true,
+            organizationId: activeOrganization.organization.id,
+            triggerSource: "manual_retry",
+          }
+        );
 
-        revalidatePath(`/vulnerabilities/${input.assetVulnerabilityId}`);
+        revalidatePathSafe(
+          "asset_vulnerability.retry_ai",
+          `/vulnerabilities/${input.assetVulnerabilityId}`
+        );
 
-        await logAuditEvent({
+        await logAuditEventSafe("asset_vulnerability.retry_ai", {
           organizationId: activeOrganization.organization.id,
           userId: identity.profile?.id ?? null,
-          action: inline.ok
-            ? "asset_vulnerability.ai_retry_completed"
+          action: queued.ok
+            ? "asset_vulnerability.ai_retry_queued"
             : "asset_vulnerability.ai_retry_failed",
           resourceType: "asset_vulnerability",
           resourceId: input.assetVulnerabilityId,
           details: {
             force: input.force ?? true,
-            status: inline.ok ? inline.data.status : "failed",
-            code: inline.ok ? "ok" : inline.code,
-            message: inline.ok ? null : inline.message.slice(0, 240),
+            queued: queued.ok ? queued.data.queued : false,
+            skippedReason: queued.ok ? queued.data.skippedReason ?? null : null,
+            code: queued.ok ? "ok" : queued.code,
+            message: queued.ok ? null : queued.message.slice(0, 240),
           },
         });
 
-        if (!inline.ok) {
-          return inline;
+        if (!queued.ok) {
+          return queued;
+        }
+
+        if (
+          queued.data.queued ||
+          queued.data.status === "already_queued"
+        ) {
+          wakeAssetVulnerabilityEnrichmentProcessor({
+            action: "asset_vulnerability.retry_ai",
+            organizationId: activeOrganization.organization.id,
+            assetVulnerabilityId: input.assetVulnerabilityId,
+          });
         }
 
         return ok({
           assetVulnerabilityId: input.assetVulnerabilityId,
-          mode: "inline",
+          mode: queued.data.queued ? "queued" : "skipped",
+          status: queued.data.status,
+          message: queueStatusMessage(queued.data.status),
         });
       } catch (error) {
-        return toActionResult(error);
+        logActionException("asset_vulnerability.retry_ai.failed", error, {
+          assetVulnerabilityId: input.assetVulnerabilityId,
+        });
+        const result = toActionResult<AssetVulnerabilityEnrichmentActionData>(error);
+
+        if (!result.ok && result.code === "server_error") {
+          return err(
+            "server_error",
+            "Retry AI could not be queued because Fortexa hit a server-side error. The failure was logged safely."
+          );
+        }
+
+        return result;
       }
     },
     undefined,
@@ -109,20 +249,15 @@ export async function retryAssetVulnerabilityEnrichmentAction(input: {
 
 export async function startAssetVulnerabilityEnrichmentAction(input: {
   assetVulnerabilityId: string;
-}): Promise<
-  ActionResult<{
-    assetVulnerabilityId: string;
-    mode: "inline" | "skipped";
-  }>
-> {
+}): Promise<ActionResult<AssetVulnerabilityEnrichmentActionData>> {
   return measureServerTiming(
     "action.assetVulnerabilities.startEnrichment",
     async () => {
       try {
-        await requirePermission("cves.enrich");
+        const identity = await requirePermission("cves.enrich");
         const activeOrganization = await requireActiveOrganization();
 
-        const inline = await runAssetVulnerabilityEnrichment(
+        const queued = await queueAssetVulnerabilityEnrichment(
           input.assetVulnerabilityId,
           {
             force: false,
@@ -131,18 +266,62 @@ export async function startAssetVulnerabilityEnrichmentAction(input: {
           }
         );
 
-        if (!inline.ok) {
-          return inline;
+        await logAuditEventSafe("asset_vulnerability.auto_ai", {
+          organizationId: activeOrganization.organization.id,
+          userId: identity.profile?.id ?? null,
+          action: queued.ok
+            ? "asset_vulnerability.ai_auto_queued"
+            : "asset_vulnerability.ai_auto_skipped",
+          resourceType: "asset_vulnerability",
+          resourceId: input.assetVulnerabilityId,
+          details: {
+            queued: queued.ok ? queued.data.queued : false,
+            skippedReason: queued.ok ? queued.data.skippedReason ?? null : null,
+            code: queued.ok ? "ok" : queued.code,
+            message: queued.ok ? null : queued.message.slice(0, 240),
+          },
+        });
+
+        if (!queued.ok) {
+          return queued;
         }
 
-        revalidatePath(`/vulnerabilities/${input.assetVulnerabilityId}`);
+        if (
+          queued.data.queued ||
+          queued.data.status === "already_queued"
+        ) {
+          wakeAssetVulnerabilityEnrichmentProcessor({
+            action: "asset_vulnerability.auto_ai",
+            organizationId: activeOrganization.organization.id,
+            assetVulnerabilityId: input.assetVulnerabilityId,
+          });
+        }
+
+        revalidatePathSafe(
+          "asset_vulnerability.auto_ai",
+          `/vulnerabilities/${input.assetVulnerabilityId}`
+        );
 
         return ok({
           assetVulnerabilityId: input.assetVulnerabilityId,
-          mode: inline.data.status === "skipped" ? "skipped" : "inline",
+          mode: queued.data.queued ? "queued" : "skipped",
+          status: queued.data.status,
+          message: queueStatusMessage(queued.data.status),
         });
       } catch (error) {
-        return toActionResult(error);
+        logActionException("asset_vulnerability.auto_ai.failed", error, {
+          assetVulnerabilityId: input.assetVulnerabilityId,
+        });
+        const result = toActionResult<AssetVulnerabilityEnrichmentActionData>(error);
+
+        if (!result.ok && result.code === "server_error") {
+          return err(
+            "server_error",
+            "AI enrichment could not be started because Fortexa hit a server-side error. The failure was logged safely."
+          );
+        }
+
+        return result;
       }
     },
     undefined,

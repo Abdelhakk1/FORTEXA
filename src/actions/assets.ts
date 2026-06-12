@@ -146,6 +146,7 @@ export async function bulkUpdateAssetClassificationAction(
             updated,
             operation: parsed.operation,
             gabExposureType: parsed.gabExposureType,
+            cidtTemplateKey: parsed.cidtTemplateKey,
           },
         });
 

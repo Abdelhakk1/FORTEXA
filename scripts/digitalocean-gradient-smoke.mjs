@@ -6,7 +6,7 @@ const { loadEnvConfig } = nextEnv;
 
 loadEnvConfig(process.cwd());
 
-const model = process.env.DIGITALOCEAN_GRADIENT_MODEL ?? "openai-gpt-oss-20b";
+const model = process.env.DIGITALOCEAN_GRADIENT_MODEL ?? "deepseek-4-flash";
 const baseUrl =
   process.env.DIGITALOCEAN_GRADIENT_BASE_URL ??
   "https://inference.do-ai.run/v1";
@@ -252,6 +252,7 @@ try {
           model,
           temperature: 0,
           max_tokens: 128,
+          response_format: { type: "json_object" },
           messages: [
             {
               role: "system",
