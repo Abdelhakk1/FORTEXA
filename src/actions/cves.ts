@@ -23,6 +23,8 @@ export async function retryCveEnrichmentAction(input: {
 
     const inline = await runCveEnrichment(input.cveId, {
       force: input.force ?? true,
+      organizationId: active.organization.id,
+      triggerSource: "manual_retry",
     });
 
     revalidatePath("/vulnerabilities");

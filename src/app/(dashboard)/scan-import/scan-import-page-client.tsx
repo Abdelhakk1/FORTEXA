@@ -40,6 +40,13 @@ function aiEnrichmentLabel(
   return `${ai.completed}/${ai.total} done`;
 }
 
+function importStatusLabel(status: string) {
+  if (status === "processing") return "Processing";
+  if (status === "partial") return "Partial";
+  if (status === "failed") return "Failed";
+  return "Completed";
+}
+
 export function ScanImportPageClient({ data }: ScanImportPageClientProps) {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -98,7 +105,7 @@ export function ScanImportPageClient({ data }: ScanImportPageClientProps) {
         <KpiCard label="Total Imports" value={data.summary.totalImports} change="Live history" changeType="neutral" icon={<Upload className="h-5 w-5" />} />
         <KpiCard label="Findings Processed" value={data.summary.totalFindings.toLocaleString()} change="Current backend total" changeType={data.summary.totalFindings > 0 ? "negative" : "neutral"} icon={<Bug className="h-5 w-5" />} />
         <KpiCard label="Assets Mapped" value={data.summary.totalAssetsMapped} change="From completed imports" changeType="neutral" icon={<Server className="h-5 w-5" />} />
-        <KpiCard label="Avg. Processing" value={data.summary.averageProcessingTime} subtitle="Synchronous MVP import" icon={<Clock className="h-5 w-5" />} />
+        <KpiCard label="Avg. Processing" value={data.summary.averageProcessingTime} subtitle="Queued Nessus processing" icon={<Clock className="h-5 w-5" />} />
       </div>
 
       <Card className="p-6 mb-6 border border-[#E9ECEF] dark:border-[#27272a] bg-white dark:bg-[#141419]">
@@ -128,12 +135,16 @@ export function ScanImportPageClient({ data }: ScanImportPageClientProps) {
           {uploadState ? (
             <div className="space-y-3">
               <CheckCircle2 className="h-12 w-12 text-emerald-600 dark:text-emerald-400 mx-auto" />
-              <p className="text-lg font-semibold text-[#1A1A2E] dark:text-[#fafafa]">Import Processed Successfully</p>
-              <p className="text-sm text-[#6B7280] dark:text-[#94A3B8]">{uploadState.fileName} was stored and processed through the canonical Nessus MVP flow.</p>
+              <p className="text-lg font-semibold text-[#1A1A2E] dark:text-[#fafafa]">
+                {uploadState.status === "processing" ? "Import Queued Successfully" : "Import Processed Successfully"}
+              </p>
+              <p className="text-sm text-[#6B7280] dark:text-[#94A3B8]">
+                {uploadState.fileName} was stored for the canonical Nessus pipeline. Open the import detail page to follow processing and evidence.
+              </p>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4 max-w-2xl mx-auto mt-6">
                 {[
                   { value: "Stored", label: "Upload", color: "text-emerald-600 dark:text-emerald-400" },
-                  { value: uploadState.status === "partial" ? "Partial" : "Completed", label: "Status", color: "text-[#1A1A2E] dark:text-[#fafafa]" },
+                  { value: importStatusLabel(uploadState.status), label: "Status", color: "text-[#1A1A2E] dark:text-[#fafafa]" },
                   { value: uploadState.importId.slice(0, 8), label: "Import ID", color: "text-[#1A1A2E] dark:text-[#fafafa]" },
                   { value: uploadState.scannerSource.toUpperCase(), label: "Source", color: "text-[#1A1A2E] dark:text-[#fafafa]" },
                 ].map((stat) => (
@@ -143,15 +154,22 @@ export function ScanImportPageClient({ data }: ScanImportPageClientProps) {
                   </div>
                 ))}
               </div>
-              <Button className="mt-4 gradient-accent text-white cursor-pointer" onClick={() => setUploadState(null)}>
-                Import Another Scan
-              </Button>
+              <div className="mt-4 flex flex-wrap justify-center gap-3">
+                <Link href={`/scan-import/${uploadState.importId}`} prefetch={false}>
+                  <Button className="gradient-accent text-white cursor-pointer">
+                    <Eye className="mr-2 h-4 w-4" /> View Import Detail
+                  </Button>
+                </Link>
+                <Button variant="outline" className="cursor-pointer" onClick={() => setUploadState(null)}>
+                  Import Another Scan
+                </Button>
+              </div>
             </div>
           ) : isPending ? (
             <div className="space-y-4">
               <div className="mx-auto h-12 w-12 rounded-full border-4 border-blue-900 dark:border-blue-800 border-t-blue-400 animate-spin" />
               <p className="text-lg font-semibold text-[#1A1A2E] dark:text-[#fafafa]">Uploading and Processing Nessus Scan...</p>
-              <p className="text-sm text-[#6B7280] dark:text-[#94A3B8]">Saving the file, creating the import record, and running the MVP normalization pipeline.</p>
+              <p className="text-sm text-[#6B7280] dark:text-[#94A3B8]">Saving the file, creating the import record, and starting the canonical Nessus pipeline.</p>
               <div className="w-full max-w-md mx-auto bg-[#F3F4F6] dark:bg-[#1a1a22] rounded-full h-2 overflow-hidden">
                 <div className="gradient-accent h-full rounded-full animate-pulse" style={{ width: "65%" }} />
               </div>
@@ -215,14 +233,12 @@ export function ScanImportPageClient({ data }: ScanImportPageClientProps) {
               </div>
             ))}
           </div>
-          <Button variant="outline" size="sm" className="mt-4 cursor-pointer w-full border-[#E9ECEF] dark:border-[#27272a] bg-[#F9FAFB] dark:bg-[#1a1a22] text-[#6B7280] dark:text-[#94A3B8] hover:bg-[#EFF6FF] dark:hover:bg-[#27272a]">Review Nessus Mapping</Button>
         </Card>
 
         <Card className="p-5 border border-[#E9ECEF] dark:border-[#27272a] bg-white dark:bg-[#141419]">
           <div className="flex items-center gap-2 mb-4">
             <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400" />
             <h3 className="text-sm font-semibold text-[#1A1A2E] dark:text-[#fafafa]">Validation Issues</h3>
-            <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500/15 text-amber-600 dark:text-amber-400 text-[10px] font-bold px-1.5">Scaffold</span>
           </div>
           <div className="space-y-2">
             {[

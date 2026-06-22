@@ -2,7 +2,7 @@ import "server-only";
 
 import * as Sentry from "@sentry/nextjs";
 import { XMLParser, XMLValidator } from "fast-xml-parser";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, lt, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import {
   alerts,
@@ -31,12 +31,14 @@ import {
   ensureAtmPaymentServicesApplication,
   recalculateBusinessPrioritiesForOrganization,
 } from "@/lib/services/business-applications";
+import { recalculateRankV2ForAssetVulnerabilities } from "@/lib/services/rank-v2";
 import {
   classifyAssetByRules,
   ensureGabCidtTemplates,
   listAssetClassificationRules,
 } from "@/lib/services/gab-business-context";
 import { queueAssetVulnerabilityEnrichment } from "@/lib/services/asset-vulnerability-enrichment";
+import { getAiBudgetLimits } from "@/lib/services/ai-budget";
 import { queueCveEnrichment } from "@/lib/services/cve-enrichment";
 import { fortexaEventNames, sendFortexaEvent } from "@/lib/services/inngest";
 import { buildRemediationCampaignSignature } from "@/lib/services/remediation-campaigns";
@@ -238,6 +240,7 @@ const enrichmentPriorityOrder: Record<BusinessPriority, number> = {
   p4: 3,
   p5: 4,
 };
+const STALE_SCAN_IMPORT_MS = 30 * 60 * 1000;
 
 async function orderAssetVulnerabilityEnrichmentCandidates(
   db: NonNullable<ReturnType<typeof getDb>>,
@@ -1678,13 +1681,42 @@ export async function processScanImport(
     )
     .limit(1);
 
-  if (
-    existingFindings &&
-    (scanImport.status === "completed" || scanImport.status === "partial")
-  ) {
+  if (existingFindings) {
+    const duplicateProcessingWarning =
+      "Scan import already has parsed findings; duplicate processing was skipped.";
+    const resolvedStatus =
+      scanImport.status === "completed" ||
+      scanImport.status === "partial" ||
+      scanImport.status === "processing"
+        ? scanImport.status
+        : "partial";
+    const warnings =
+      scanImport.status === "completed" || scanImport.status === "partial"
+        ? []
+        : [duplicateProcessingWarning];
+
+    if (resolvedStatus !== scanImport.status || warnings.length > 0) {
+      await db
+        .update(scanImports)
+        .set({
+          status: resolvedStatus,
+          warnings: Math.max(scanImport.warnings ?? 0, warnings.length),
+          errorDetails: {
+            ...(typeof scanImport.errorDetails === "object" &&
+            scanImport.errorDetails !== null
+              ? scanImport.errorDetails
+              : {}),
+            warnings,
+            duplicateProcessingSkipped: true,
+          },
+          updatedAt: new Date(),
+        })
+        .where(eq(scanImports.id, scanImportId));
+    }
+
     return {
       id: scanImport.id,
-      status: scanImport.status,
+      status: resolvedStatus,
       createdAssets: scanImport.newAssets,
       updatedAssets:
         scanImport.matchedAssets ??
@@ -1698,7 +1730,7 @@ export async function processScanImport(
       reopenedFindings: scanImport.reopenedFindings ?? 0,
       unchangedFindings: scanImport.unchangedFindings ?? 0,
       lowConfidenceMatches: scanImport.lowConfidenceMatches ?? 0,
-      warnings: [],
+      warnings,
       errors: [],
     };
   }
@@ -1888,6 +1920,13 @@ export async function processScanImport(
             linkedCves += 1;
             const key = `${matched.asset.id}:${cveRow.id}`;
             seenAssetVulnerabilityKeys.add(key);
+            const existing = avMap.get(key);
+            const slaDue = buildSlaDueDate(finding.severity);
+            const slaStatus = buildSlaStatus(slaDue);
+            const lifecycleStatus =
+              existing?.status === "closed" || existing?.status === "mitigated"
+                ? "reopened"
+                : existing?.status ?? "new";
             const applicationCidt = {
               confidentiality: application.cidtConfidentiality,
               integrity: application.cidtIntegrity,
@@ -1918,17 +1957,22 @@ export async function processScanImport(
               applicationCidt,
               applicationInternetExposed: application.isInternetExposed,
               gabExposureType: matched.asset.gabExposureType,
+              slaDue,
+              slaStatus,
+              lifecycleStatus,
+              scannerEvidenceCount: 1,
+              scannerEvidenceQuality: matched.matchConfidence,
+              trustedSourceCount: 0,
+              firstSeen: existing?.firstSeen ?? finding.firstSeen,
+              assetCode: matched.asset.assetCode,
+              cveId: cveRow.cveId,
+              id: existing?.id ?? null,
             });
             const riskScore = priority.riskScore;
             const businessPriority = priority.businessPriority;
-            const slaDue = buildSlaDueDate(finding.severity);
-            const existing = avMap.get(key);
 
             if (existing) {
-              const nextStatus =
-                existing.status === "closed" || existing.status === "mitigated"
-                  ? "reopened"
-                  : existing.status;
+              const nextStatus = lifecycleStatus;
               const [updated] = await db
                 .update(assetVulnerabilities)
                 .set({
@@ -1938,7 +1982,7 @@ export async function processScanImport(
                   businessPriority,
                   priorityFactors: priority.factors as unknown as Record<string, unknown>,
                   slaDue,
-                  slaStatus: buildSlaStatus(slaDue),
+                  slaStatus,
                   scoringPolicyId: activePolicy?.id ?? existing.scoringPolicyId,
                   sourceScanImportId: scanImportId,
                   notes: finding.solution ?? existing.notes,
@@ -2017,7 +2061,7 @@ export async function processScanImport(
                 riskScore,
                 priorityFactors: priority.factors as unknown as Record<string, unknown>,
                 slaDue,
-                slaStatus: buildSlaStatus(slaDue),
+                slaStatus,
                 scoringPolicyId: activePolicy?.id ?? null,
                 sourceScanImportId: scanImportId,
                 notes: finding.solution,
@@ -2116,6 +2160,13 @@ export async function processScanImport(
       );
     }
 
+    if (enrichmentAssetVulnerabilityIds.size > 0) {
+      await recalculateRankV2ForAssetVulnerabilities({
+        organizationId,
+        assetVulnerabilityIds: Array.from(enrichmentAssetVulnerabilityIds),
+      });
+    }
+
     const status =
       errors.length > 0 && createdFindings + createdAssets + updatedAssets > 0
         ? "partial"
@@ -2156,9 +2207,24 @@ export async function processScanImport(
     await ensureDefaultReportDefinitions(organizationId, scanImport.importedBy ?? null);
 
     if (aiEnabled) {
-      for (const cveId of enrichmentCveIds) {
+      const aiBudgetLimits = getAiBudgetLimits();
+      const cveIdsForAutomaticEnrichment = Array.from(enrichmentCveIds).slice(
+        0,
+        aiBudgetLimits.automaticImportCveLimit
+      );
+
+      if (enrichmentCveIds.size > cveIdsForAutomaticEnrichment.length) {
+        warnings.push(
+          `AI CVE enrichment limited to ${aiBudgetLimits.automaticImportCveLimit} CVE(s) for this import.`
+        );
+      }
+
+      for (const cveId of cveIdsForAutomaticEnrichment) {
         try {
-          const queued = await queueCveEnrichment(cveId);
+          const queued = await queueCveEnrichment(cveId, {
+            organizationId,
+            triggerSource: "automatic_import",
+          });
           if (!queued.ok) {
             warnings.push(`AI enrichment queue skipped for one CVE: ${queued.message}`);
           }
@@ -2174,8 +2240,18 @@ export async function processScanImport(
           organizationId,
           Array.from(enrichmentAssetVulnerabilityIds)
         );
+      const automaticPlaybookIds = prioritizedAssetVulnerabilityIds.slice(
+        0,
+        aiBudgetLimits.automaticImportPlaybookLimit
+      );
 
-      for (const assetVulnerabilityId of prioritizedAssetVulnerabilityIds) {
+      if (prioritizedAssetVulnerabilityIds.length > automaticPlaybookIds.length) {
+        warnings.push(
+          `AI playbook enrichment limited to ${aiBudgetLimits.automaticImportPlaybookLimit} remediation campaign representative(s) for this import.`
+        );
+      }
+
+      for (const assetVulnerabilityId of automaticPlaybookIds) {
         try {
           const queued = await queueAssetVulnerabilityEnrichment(
             assetVulnerabilityId,
@@ -2279,6 +2355,84 @@ export async function processScanImport(
 
     throw new AppError(normalizedError.code, normalizedError.message);
   }
+}
+
+export async function recoverStaleProcessingScanImports(
+  maxAgeMs = STALE_SCAN_IMPORT_MS
+) {
+  const db = getDb();
+
+  if (!db) {
+    return { stale: 0, markedPartial: 0, markedFailed: 0 };
+  }
+
+  const cutoff = new Date(Date.now() - maxAgeMs);
+  const staleRows = await db
+    .select()
+    .from(scanImports)
+    .where(
+      and(
+        eq(scanImports.status, "processing"),
+        lt(scanImports.updatedAt, cutoff)
+      )
+    )
+    .limit(20);
+  let markedPartial = 0;
+  let markedFailed = 0;
+
+  for (const row of staleRows) {
+    const [existingFinding] = await db
+      .select({ id: scanFindings.id })
+      .from(scanFindings)
+      .where(
+        and(
+          eq(scanFindings.organizationId, row.organizationId),
+          eq(scanFindings.scanImportId, row.id)
+        )
+      )
+      .limit(1);
+    const nextStatus = existingFinding ? "partial" : "failed";
+    const message = existingFinding
+      ? "Import processing became stale after writing scanner findings; marked partial to prevent duplicate reprocessing."
+      : "Import processing became stale before scanner findings were written.";
+
+    await db
+      .update(scanImports)
+      .set({
+        status: nextStatus,
+        errors: row.errors + 1,
+        warnings: existingFinding ? row.warnings + 1 : row.warnings,
+        errorDetails: {
+          ...(typeof row.errorDetails === "object" && row.errorDetails !== null
+            ? row.errorDetails
+            : {}),
+          staleRecovery: {
+            message,
+            recoveredAt: new Date().toISOString(),
+          },
+        },
+        updatedAt: new Date(),
+      })
+      .where(eq(scanImports.id, row.id));
+
+    if (existingFinding) {
+      markedPartial += 1;
+    } else {
+      markedFailed += 1;
+      await createImportFailureAlert({
+        organizationId: row.organizationId,
+        scanImportId: row.id,
+        importedBy: row.importedBy ?? null,
+        message,
+      });
+    }
+  }
+
+  return {
+    stale: staleRows.length,
+    markedPartial,
+    markedFailed,
+  };
 }
 
 export async function importAssetsFromCsv(params: {

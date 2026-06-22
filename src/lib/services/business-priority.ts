@@ -192,6 +192,33 @@ const severityScores = {
   info: 8,
 } as const;
 
+export const NESSUS_SEVERITY_FALLBACK = {
+  4: 39,
+  3: 32,
+  2: 22,
+  1: 10,
+  0: 0,
+} as const;
+
+const severityLevels = {
+  critical: 4,
+  high: 3,
+  medium: 2,
+  moderate: 2,
+  low: 1,
+  info: 0,
+  informational: 0,
+  none: 0,
+} as const;
+
+const severityLabels = {
+  4: "Critical",
+  3: "High",
+  2: "Medium",
+  1: "Low",
+  0: "Info",
+} as const;
+
 const exploitScores = {
   active_in_wild: 100,
   poc_available: 78,
@@ -232,6 +259,59 @@ const slaUrgencyOrder = {
 
 function clampScore(value: number) {
   return Math.max(0, Math.min(100, Math.round(value)));
+}
+
+export function normalizeCvssScore(value: number | string | null | undefined) {
+  if (value == null || value === "") {
+    return null;
+  }
+
+  const score = typeof value === "number" ? value : Number.parseFloat(value);
+  return Number.isFinite(score) && score >= 0 && score <= 10 ? score : null;
+}
+
+function severityLevelFrom(value: number | string | null | undefined) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value >= 0 && value <= 4 ? (value as keyof typeof severityLabels) : null;
+  }
+
+  const normalized = value?.toString().trim().toLowerCase();
+  if (!normalized) {
+    return null;
+  }
+
+  if (/^[0-4]$/.test(normalized)) {
+    return Number.parseInt(normalized, 10) as keyof typeof severityLabels;
+  }
+
+  return severityLevels[normalized as keyof typeof severityLevels] ?? null;
+}
+
+export function normalizeSeverity(input: {
+  cvssBaseScore?: number | string | null;
+  nessusSeverity?: number | string | null;
+  severityLabel?: string | null;
+}) {
+  const cvssScore = normalizeCvssScore(input.cvssBaseScore);
+  const nessusLevel = severityLevelFrom(input.nessusSeverity);
+  const labelLevel = severityLevelFrom(input.severityLabel);
+  const level = nessusLevel ?? labelLevel ?? 0;
+  const usesCvss = cvssScore != null && cvssScore > 0;
+
+  return {
+    label: severityLabels[level],
+    cvssScore,
+    severitySource: usesCvss
+      ? "cvss"
+      : nessusLevel != null
+        ? "nessus"
+        : labelLevel != null
+          ? "scanner"
+          : "unknown",
+    severityComponent: usesCvss
+      ? Math.max(0, Math.min(40, Math.round(cvssScore * 4)))
+      : NESSUS_SEVERITY_FALLBACK[level],
+  } as const;
 }
 
 function isCidtValue(value: number | null | undefined): value is CidtValue {
@@ -587,7 +667,11 @@ function technicalSeverityScore(input: {
   severity: string | null | undefined;
   cvssScore?: number | null;
 }) {
-  if (typeof input.cvssScore === "number" && Number.isFinite(input.cvssScore)) {
+  if (
+    typeof input.cvssScore === "number" &&
+    Number.isFinite(input.cvssScore) &&
+    input.cvssScore > 0
+  ) {
     return clampScore(input.cvssScore * 10);
   }
 
@@ -730,16 +814,10 @@ function severityRankV2(input: {
   severity: string | null | undefined;
   cvssScore?: number | null;
 }) {
-  if (typeof input.cvssScore === "number" && Number.isFinite(input.cvssScore)) {
-    return Math.max(0, Math.min(40, Math.round(input.cvssScore * 4)));
-  }
-
-  const normalized = input.severity?.toLowerCase();
-  if (normalized === "critical") return 40;
-  if (normalized === "high") return 32;
-  if (normalized === "medium") return 22;
-  if (normalized === "low") return 11;
-  return 3;
+  return normalizeSeverity({
+    cvssBaseScore: input.cvssScore,
+    severityLabel: input.severity,
+  }).severityComponent;
 }
 
 function exploitMaturityRank(value: string | null | undefined) {
@@ -1174,6 +1252,16 @@ export function calculateBusinessPriority(input: {
   applicationCidt: CidtVector;
   applicationInternetExposed: boolean;
   gabExposureType: string | null | undefined;
+  slaDue?: Date | string | null;
+  slaStatus?: string | null;
+  lifecycleStatus?: string | null;
+  scannerEvidenceCount?: number | null;
+  scannerEvidenceQuality?: number | null;
+  trustedSourceCount?: number | null;
+  firstSeen?: Date | string | null;
+  assetCode?: string | null;
+  cveId?: string | null;
+  id?: string | null;
   assetCidtSource?: GabCidtSource;
   assetCidtSourceLabel?: string;
   assetCidtMissingContext?: string[];
@@ -1228,6 +1316,16 @@ export function calculateBusinessPriority(input: {
     applicationCidt: input.applicationCidt,
     applicationInternetExposed: input.applicationInternetExposed,
     gabExposureType,
+    slaDue: input.slaDue,
+    slaStatus: input.slaStatus,
+    lifecycleStatus: input.lifecycleStatus,
+    scannerEvidenceCount: input.scannerEvidenceCount,
+    scannerEvidenceQuality: input.scannerEvidenceQuality,
+    trustedSourceCount: input.trustedSourceCount,
+    firstSeen: input.firstSeen,
+    assetCode: input.assetCode,
+    cveId: input.cveId,
+    id: input.id,
   });
   const missingContext: string[] = [];
 

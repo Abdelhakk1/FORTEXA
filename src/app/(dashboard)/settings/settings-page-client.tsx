@@ -911,7 +911,7 @@ export function SettingsPageClient({
             <div className="space-y-3">
               {gabTemplateProfiles
                 .filter((template) => !template.archived)
-                .map((template, templateIndex) => (
+                .map((template) => (
                 <div
                   key={template.templateKey}
                   className="rounded-xl border border-[#E9ECEF] bg-[#F9FAFB] p-4 dark:border-[#27272a] dark:bg-[#1a1a22]"

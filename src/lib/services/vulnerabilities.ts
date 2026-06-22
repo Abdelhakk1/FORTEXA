@@ -8,7 +8,6 @@ import {
   cveEnrichments,
   cves,
   assets,
-  scanFindings,
 } from "@/db/schema";
 import type { Asset, RemediationCampaign, Vulnerability } from "@/lib/types";
 import { measureServerTiming } from "@/lib/observability/timing";
@@ -17,6 +16,7 @@ import {
   calculateRankV2,
   compareRankV2,
   getRankV2SlaState,
+  normalizeCvssScore,
   prioritySummaryFromFactors,
   normalizeEpssScore,
 } from "./business-priority";
@@ -30,7 +30,10 @@ import {
   toUiSeverity,
   toUiVulnerabilityStatus as toUiLifecycleStatus,
 } from "./serializers";
-import { buildRemediationCampaignSignature } from "./remediation-campaigns";
+import {
+  buildRemediationCampaignSignature,
+  formatCvePreview,
+} from "./remediation-campaigns";
 
 const severityRank = {
   critical: 5,
@@ -47,10 +50,6 @@ const priorityRank = {
   p4: 4,
   p5: 5,
 } as const;
-
-function isOutdoorGab(exposure: string | null | undefined) {
-  return /outdoor/i.test(exposure ?? "");
-}
 
 function majorPriorityProfileKey(rankV2: ReturnType<typeof calculateRankV2>) {
   return [
@@ -196,6 +195,7 @@ function buildRemediationCampaigns(
         orderedVulnerabilities.map((item) => item.assetCode)
       );
       const groupedCvesText = cveIds.join(", ");
+      const groupedCvesPreview = formatCvePreview(cveIds);
       const isGroupedCampaign =
         cveIds.length > 1 || affectedAssetCodes.length > 1 || orderedVulnerabilities.length > 1;
       const campaignRationale =
@@ -237,6 +237,7 @@ function buildRemediationCampaigns(
         campaignRationale,
         tieBreakReason: campaignRationale,
         groupedCvesText,
+        groupedCvesPreview,
         rawFindingIds: orderedVulnerabilities.map((item) => item.id),
         rankV2: representative.rankV2,
       };
@@ -255,10 +256,15 @@ function buildRemediationCampaigns(
 
       return left.title.localeCompare(right.title);
     })
-    .map(({ rankV2, ...campaign }, index) => ({
-      ...campaign,
-      fixRank: index + 1,
-    })) satisfies RemediationCampaign[];
+    .map((campaignWithRank, index) => {
+      const campaign = { ...campaignWithRank };
+      Reflect.deleteProperty(campaign, "rankV2");
+
+      return {
+        ...campaign,
+        fixRank: index + 1,
+      };
+    }) satisfies RemediationCampaign[];
 }
 
 export interface VulnerabilityOverviewData {
@@ -407,7 +413,7 @@ export async function getVulnerabilityOverviewData(
                   gabExposure: String(row.av.priorityFactors.gabExposure ?? ""),
                 }
               : undefined;
-          const cvssScore = row.cve.cvssScore ? Number(row.cve.cvssScore) : 0;
+          const cvssScore = normalizeCvssScore(row.cve.cvssScore);
           const hasCisaKevSource = Boolean(row.hasCisaKevSource);
           const epssScore = normalizeEpssScore(row.epssScore);
           const slaState = getRankV2SlaState({
@@ -582,6 +588,15 @@ export async function getVulnerabilityOverviewData(
         };
       });
       const remediationCampaigns = buildRemediationCampaigns(vulnerabilities);
+      const liveRankByAssetVulnerabilityId = new Map(
+        vulnerabilityRows.map((vulnerability) => [
+          vulnerability.id,
+          {
+            score: vulnerability.rankScore ?? vulnerability.riskScore ?? 0,
+            businessPriority: vulnerability.rankV2.businessPriority,
+          },
+        ])
+      );
 
       const assetStats = new Map<
         string,
@@ -604,7 +619,10 @@ export async function getVulnerabilityOverviewData(
         };
 
         current.count += 1;
-        current.maxRisk = Math.max(current.maxRisk, row.av.riskScore);
+        const liveRank = liveRankByAssetVulnerabilityId.get(row.av.id);
+        const liveBusinessPriority = liveRank?.businessPriority ?? row.av.businessPriority;
+
+        current.maxRisk = Math.max(current.maxRisk, liveRank?.score ?? row.av.riskScore);
         if (
           !current.maxSeverity ||
           severityRank[row.cve.severity] > severityRank[current.maxSeverity]
@@ -613,9 +631,9 @@ export async function getVulnerabilityOverviewData(
         }
         if (
           !current.topPriority ||
-          priorityRank[row.av.businessPriority] < priorityRank[current.topPriority]
+          priorityRank[liveBusinessPriority] < priorityRank[current.topPriority]
         ) {
-          current.topPriority = row.av.businessPriority;
+          current.topPriority = liveBusinessPriority;
         }
 
         assetStats.set(row.asset.id, current);

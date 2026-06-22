@@ -8,6 +8,7 @@ import { err, ok, toActionResult, type ActionResult } from "@/lib/errors";
 import { measureServerTiming } from "@/lib/observability/timing";
 import { processScanImport } from "@/lib/services/ingestion";
 import { processPendingAssetVulnerabilityEnrichments } from "@/lib/services/asset-vulnerability-enrichment";
+import { fortexaEventNames, sendFortexaEvent } from "@/lib/services/inngest";
 import { createScanImportRecord } from "@/lib/services/scan-imports";
 import {
   getFortexaStorageBuckets,
@@ -16,11 +17,12 @@ import {
 
 const MAX_NESSUS_IMPORT_BYTES = 25 * 1024 * 1024;
 
-function buildStoragePath(fileName: string) {
+function buildStoragePath(organizationId: string, fileName: string) {
   const now = new Date();
   const safeFileName = fileName.replace(/[^a-zA-Z0-9._-]/g, "-");
 
   return [
+    organizationId,
     now.getUTCFullYear(),
     String(now.getUTCMonth() + 1).padStart(2, "0"),
     `${now.getTime()}-${safeFileName}`,
@@ -154,10 +156,9 @@ export async function createScanImportAction(
           );
         }
 
-        const xmlText = await file.text();
         const upload = await uploadFileToStorage({
           bucket: getFortexaStorageBuckets().scanImports,
-          path: buildStoragePath(file.name),
+          path: buildStoragePath(activeOrganization.organization.id, file.name),
           file,
         });
 
@@ -185,11 +186,49 @@ export async function createScanImportAction(
           },
         });
 
+        let queueFallbackWarning: string | null = null;
+
+        if (upload.ok) {
+          const queued = await sendFortexaEvent({
+            name: fortexaEventNames.scanImportRequested,
+            data: {
+              organizationId: activeOrganization.organization.id,
+              scanImportId: record.id,
+            },
+          });
+
+          await logAuditEvent({
+            organizationId: activeOrganization.organization.id,
+            userId: identity.profile?.id ?? null,
+            action: queued.ok
+              ? "scan_import.processing_queued"
+              : "scan_import.processing_queue_fallback",
+            resourceType: "scan_import",
+            resourceId: record.id,
+            details: {
+              queueStatus: queued.ok ? "queued" : "fallback_inline",
+              queueMessage: queued.ok ? null : queued.message,
+            },
+          });
+
+          if (queued.ok) {
+            revalidatePath("/scan-import");
+            revalidatePath("/dashboard");
+            revalidatePath("/alerts");
+
+            return ok({ id: record.id, status: "processing" });
+          }
+
+          queueFallbackWarning = `Background import queue skipped: ${queued.message}`;
+        }
+
+        const xmlText = await file.text();
         const processed = await processScanImport(record.id, {
           xmlText,
-          initialWarnings: upload.ok
-            ? []
-            : [`Storage upload skipped: ${upload.message}`],
+          initialWarnings: [
+            ...(upload.ok ? [] : [`Storage upload skipped: ${upload.message}`]),
+            ...(queueFallbackWarning ? [queueFallbackWarning] : []),
+          ],
         });
 
         await logAuditEvent({

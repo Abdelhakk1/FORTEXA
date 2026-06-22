@@ -4,11 +4,17 @@ import {
   calculateApplicationProfile,
   calculateBusinessPriority,
   calculateCidtSensitivity,
+  calculateRankV2,
   defaultGabCidtTemplates,
+  normalizeSeverity,
   recommendedFixOrderScore,
   resolveGabCidtContext,
   toSensitivityLevel,
 } from "./business-priority";
+import {
+  calculateCanonicalRankV2,
+  sourceBackedExploitMaturity,
+} from "./rank-v2";
 
 test("CIDT sensitivity is the maximum of C, I, D, and T", () => {
   const sensitivity = calculateCidtSensitivity({
@@ -323,4 +329,136 @@ test("recommended fix order uses EPSS likelihood when source-backed inputs match
   });
 
   assert.ok(highEpss > lowEpss);
+});
+
+test("source-backed exploit maturity requires KEV before active-in-wild rank credit", () => {
+  assert.equal(
+    sourceBackedExploitMaturity("active_in_wild", false),
+    "poc_available"
+  );
+  assert.equal(
+    sourceBackedExploitMaturity("poc_available", true),
+    "active_in_wild"
+  );
+});
+
+test("severity normalization uses CVSS when present and Nessus/text fallback when missing", () => {
+  const cvss = normalizeSeverity({
+    cvssBaseScore: 9.8,
+    nessusSeverity: 4,
+  });
+  const criticalFallback = normalizeSeverity({
+    cvssBaseScore: null,
+    nessusSeverity: 4,
+  });
+  const highFallback = normalizeSeverity({
+    cvssBaseScore: "",
+    nessusSeverity: 3,
+  });
+  const info = normalizeSeverity({
+    nessusSeverity: 0,
+  });
+
+  assert.equal(cvss.label, "Critical");
+  assert.equal(cvss.cvssScore, 9.8);
+  assert.equal(cvss.severitySource, "cvss");
+  assert.equal(cvss.severityComponent, 39);
+  assert.deepEqual(
+    {
+      label: criticalFallback.label,
+      score: criticalFallback.cvssScore,
+      source: criticalFallback.severitySource,
+      component: criticalFallback.severityComponent,
+    },
+    { label: "Critical", score: null, source: "nessus", component: 39 }
+  );
+  assert.deepEqual(
+    {
+      label: highFallback.label,
+      score: highFallback.cvssScore,
+      source: highFallback.severitySource,
+      component: highFallback.severityComponent,
+    },
+    { label: "High", score: null, source: "nessus", component: 32 }
+  );
+  assert.equal(info.severityComponent, 0);
+});
+
+test("Rank v2 falls back to scanner severity when CVSS is missing or zero", () => {
+  const rank = calculateRankV2({
+    severity: "critical",
+    cvssScore: 0,
+    exploitMaturity: "theoretical",
+    assetCidt: {
+      confidentiality: 2,
+      integrity: 2,
+      availability: 2,
+      traceability: 2,
+    },
+    applicationCidt: {
+      confidentiality: 4,
+      integrity: 4,
+      availability: 4,
+      traceability: 4,
+    },
+    applicationInternetExposed: false,
+    gabExposureType: "indoor_agency",
+  });
+
+  assert.equal(rank.factorScores.severity, 39);
+});
+
+test("canonical Rank v2 persists the same score and factors it explains", () => {
+  const av = {
+    id: "av-1",
+    status: "open",
+    riskScore: 12,
+    businessPriority: "p4",
+    slaDue: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000),
+    slaStatus: "at_risk",
+    firstSeen: new Date("2026-05-01T00:00:00Z"),
+  };
+  const asset = {
+    id: "asset-1",
+    assetCode: "GAB-OUT-001",
+    cidtOverrideEnabled: false,
+    cidtTemplateKey: null,
+    cidtConfidentiality: null,
+    cidtIntegrity: null,
+    cidtAvailability: null,
+    cidtTraceability: null,
+    gabExposureType: "outdoor_public_street",
+  };
+  const cve = {
+    id: "cve-1",
+    cveId: "CVE-2024-3400",
+    severity: "critical",
+    cvssScore: "10.0",
+    exploitMaturity: "theoretical",
+  };
+
+  const canonical = calculateCanonicalRankV2({
+    av: av as never,
+    asset: asset as never,
+    cve: cve as never,
+    templates: defaultGabCidtTemplates as never,
+    hasCisaKevSource: true,
+    epssScore: 0.91,
+    trustedSourceCount: 3,
+    scannerEvidenceCount: 2,
+    scannerEvidenceQuality: 95,
+  });
+
+  assert.equal(canonical.priority.riskScore, canonical.rank.score);
+  assert.equal(canonical.priority.businessPriority, canonical.rank.businessPriority);
+  assert.equal(canonical.priority.factors.rankV2?.score, canonical.rank.score);
+  assert.deepEqual(canonical.priority.factors.rankV2?.factorScores, {
+    severity: canonical.rank.factorScores.severity,
+    threat: canonical.rank.factorScores.threat,
+    business: canonical.rank.factorScores.business,
+    urgency: canonical.rank.factorScores.urgency,
+  });
+  assert.match(canonical.rank.shortReason, /KEV/);
+  assert.match(canonical.rank.shortReason, /EPSS/);
+  assert.match(canonical.rank.shortReason, /Outdoor GAB/);
 });

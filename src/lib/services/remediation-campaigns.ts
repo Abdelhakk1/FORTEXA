@@ -12,6 +12,7 @@ export const MS17_010_CVE_IDS = new Set([
 ]);
 
 type RemediationCampaignBasis =
+  | "kb"
   | "ms17_010"
   | "nessus_plugin"
   | "solution"
@@ -36,6 +37,22 @@ function normalizeText(value: string | null | undefined) {
 
 function shortHash(value: string) {
   return createHash("sha256").update(value).digest("hex").slice(0, 14);
+}
+
+function extractMicrosoftKb(value: string) {
+  const text = value.replace(/\s+/g, " ");
+  const direct = text.match(/\bKB\s*([0-9]{6,8})\b/i);
+  const update = text.match(/\bSecurity Update\s+([0-9]{6,8})\b/i);
+  const id = direct?.[1] ?? update?.[1];
+
+  return id ? `KB${id}` : null;
+}
+
+export function formatCvePreview(cveIds: string[], limit = 5) {
+  const shown = cveIds.slice(0, limit).join(", ");
+  const hidden = cveIds.length - limit;
+
+  return hidden > 0 ? `${shown} +${hidden} other CVEs` : shown;
 }
 
 function compactTitle(value: string | null | undefined) {
@@ -83,6 +100,23 @@ export function buildRemediationCampaignSignature(input: {
     };
   }
 
+  const kbId = extractMicrosoftKb(
+    [
+      input.scannerFindingTitle,
+      input.cveTitle,
+      input.remediationText,
+    ].join(" ")
+  );
+
+  if (kbId) {
+    return {
+      key: `campaign:kb:${kbId.toLowerCase()}`,
+      title: `${kbId} remediation campaign`,
+      basis: "kb",
+      rationale: `same Microsoft ${kbId} update`,
+    };
+  }
+
   const normalizedSolution = normalizeText(input.remediationText);
   const normalizedTitle = normalizeText(
     input.scannerFindingTitle ?? input.cveTitle
@@ -125,4 +159,3 @@ export function buildRemediationCampaignSignature(input: {
     rationale: "same CVE across GABs",
   };
 }
-

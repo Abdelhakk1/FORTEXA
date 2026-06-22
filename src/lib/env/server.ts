@@ -124,6 +124,12 @@ export const serverEnv = {
     DEFAULT_DIGITALOCEAN_GRADIENT_BASE_URL,
   digitalOceanGradientTimeoutMs:
     readPositiveIntEnv(process.env.DIGITALOCEAN_GRADIENT_TIMEOUT_MS) ?? 30_000,
+  fortexaAiDailyRequestLimit:
+    readPositiveIntEnv(process.env.FORTEXA_AI_DAILY_REQUEST_LIMIT) ?? 30,
+  fortexaAiAutoImportCveLimit:
+    readPositiveIntEnv(process.env.FORTEXA_AI_AUTO_IMPORT_CVE_LIMIT) ?? 5,
+  fortexaAiAutoImportPlaybookLimit:
+    readPositiveIntEnv(process.env.FORTEXA_AI_AUTO_IMPORT_PLAYBOOK_LIMIT) ?? 3,
   fortexaReportsBucket:
     readEnv(process.env.FORTEXA_REPORTS_BUCKET) ?? "fortexa-reports",
   fortexaScanImportsBucket:

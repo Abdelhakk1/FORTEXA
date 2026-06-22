@@ -13,11 +13,11 @@ const severityConfig: Record<Severity, { className: string; label: string }> = {
   INFO: { className: "bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100 dark:bg-[#0A1A2D] dark:text-[#60A5FA] dark:border-blue-900/50 dark:hover:bg-[#10204D]", label: "INFO" },
 };
 
-export function SeverityBadge({ severity, score }: { severity: Severity; score?: number }) {
+export function SeverityBadge({ severity, score }: { severity: Severity; score?: number | null }) {
   const config = severityConfig[severity];
   return (
     <Badge variant="outline" className={`font-semibold text-xs rounded-full ${config.className}`}>
-      {config.label}{score !== undefined ? ` (${score})` : ""}
+      {config.label}{typeof score === "number" ? ` (${score})` : ""}
     </Badge>
   );
 }

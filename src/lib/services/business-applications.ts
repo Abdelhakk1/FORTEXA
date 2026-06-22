@@ -3,20 +3,13 @@ import "server-only";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { getDb } from "@/db";
-import {
-  assetVulnerabilities,
-  assets,
-  businessApplications,
-  cves,
-} from "@/db/schema";
+import { businessApplications } from "@/db/schema";
 import { AppError } from "@/lib/errors";
 import {
   ATM_PAYMENT_SERVICES_KEY,
   ATM_PAYMENT_SERVICES_LABEL,
-  calculateBusinessPriority,
-  resolveGabCidtContext,
 } from "./business-priority";
-import { ensureGabCidtTemplates } from "./gab-business-context";
+import { recalculateRankV2ForAssetVulnerabilities } from "./rank-v2";
 
 export type BusinessApplicationRecord =
   typeof businessApplications.$inferSelect;
@@ -135,75 +128,10 @@ export async function recalculateBusinessPrioritiesForOrganization(
   organizationId: string,
   options: { assetId?: string } = {}
 ) {
-  const db = getDb();
+  await ensureAtmPaymentServicesApplication(organizationId);
 
-  if (!db) {
-    return 0;
-  }
-
-  const application = await ensureAtmPaymentServicesApplication(organizationId);
-  const templates = await ensureGabCidtTemplates(organizationId);
-  const where = options.assetId
-    ? and(
-        eq(assetVulnerabilities.organizationId, organizationId),
-        eq(assetVulnerabilities.assetId, options.assetId)
-      )
-    : eq(assetVulnerabilities.organizationId, organizationId);
-
-  const rows = await db
-    .select({
-      av: assetVulnerabilities,
-      asset: assets,
-      cve: cves,
-    })
-    .from(assetVulnerabilities)
-    .innerJoin(assets, eq(assetVulnerabilities.assetId, assets.id))
-    .innerJoin(cves, eq(assetVulnerabilities.cveId, cves.id))
-    .where(where);
-
-  for (const row of rows) {
-    const applicationCidt = {
-      confidentiality: application.cidtConfidentiality,
-      integrity: application.cidtIntegrity,
-      availability: application.cidtAvailability,
-      traceability: application.cidtTraceability,
-    };
-    const resolvedAssetCidt = resolveGabCidtContext({
-      assetCidt: {
-        confidentiality: row.asset.cidtConfidentiality,
-        integrity: row.asset.cidtIntegrity,
-        availability: row.asset.cidtAvailability,
-        traceability: row.asset.cidtTraceability,
-      },
-      cidtOverrideEnabled: row.asset.cidtOverrideEnabled,
-      cidtTemplateKey: row.asset.cidtTemplateKey,
-      gabExposureType: row.asset.gabExposureType,
-      templates,
-      applicationCidt,
-    });
-    const score = calculateBusinessPriority({
-      severity: row.cve.severity,
-      cvssScore: row.cve.cvssScore ? Number(row.cve.cvssScore) : null,
-      exploitMaturity: row.cve.exploitMaturity,
-      assetCidt: resolvedAssetCidt.cidt,
-      assetCidtSource: resolvedAssetCidt.source,
-      assetCidtSourceLabel: resolvedAssetCidt.sourceLabel,
-      assetCidtMissingContext: resolvedAssetCidt.missingContext,
-      applicationCidt,
-      applicationInternetExposed: application.isInternetExposed,
-      gabExposureType: row.asset.gabExposureType,
-    });
-
-    await db
-      .update(assetVulnerabilities)
-      .set({
-        riskScore: score.riskScore,
-        businessPriority: score.businessPriority,
-        priorityFactors: score.factors as unknown as Record<string, unknown>,
-        updatedAt: new Date(),
-      })
-      .where(eq(assetVulnerabilities.id, row.av.id));
-  }
-
-  return rows.length;
+  return recalculateRankV2ForAssetVulnerabilities({
+    organizationId,
+    assetId: options.assetId,
+  });
 }

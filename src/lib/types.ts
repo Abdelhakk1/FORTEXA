@@ -87,7 +87,7 @@ export interface Vulnerability {
   title: string;
   description: string;
   severity: Severity;
-  cvssScore: number;
+  cvssScore: number | null;
   cvssVector: string;
   businessPriority: BusinessPriority;
   riskScore?: number;
@@ -158,7 +158,7 @@ export interface RemediationCampaign {
   cveCount: number;
   findingCount: number;
   severity: Severity;
-  cvssScore: number;
+  cvssScore: number | null;
   businessPriority: BusinessPriority;
   riskScore: number;
   rankScore: number;
@@ -176,6 +176,7 @@ export interface RemediationCampaign {
   campaignRationale: string;
   tieBreakReason: string;
   groupedCvesText: string;
+  groupedCvesPreview: string;
   rawFindingIds: string[];
 }
 

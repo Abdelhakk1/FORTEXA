@@ -23,6 +23,7 @@ import {
   compareRankV2,
   formatPriorityFactorSummary,
   getRankV2SlaState,
+  normalizeCvssScore,
   prioritySummaryFromFactors,
   simplifyGabExposureText,
 } from "./business-priority";
@@ -43,6 +44,7 @@ import {
   strongestEpssScoreFromSources,
 } from "./trusted-vulnerability-sources";
 import { buildRemediationCampaignSignature } from "./remediation-campaigns";
+import { recalculateRankV2ForAssetVulnerabilities } from "./rank-v2";
 import { buildPaginatedResult, desc, getPagination, sql, type SQL } from "./utils";
 
 export interface AssetVulnerabilityFilters {
@@ -81,7 +83,7 @@ export interface AssetVulnerabilityDetailData {
     title: string;
     description: string;
     severity: string;
-    cvssScore: number;
+    cvssScore: number | null;
     cvssVector: string;
     status: string;
     statusDb: typeof assetVulnerabilities.$inferSelect.status;
@@ -344,7 +346,7 @@ export async function listAssetVulnerabilities(
       cveId: row.cveCode ?? "—",
       title: row.title ?? "Unlinked CVE",
       severity: toUiSeverity(row.severity),
-      cvssScore: row.cvssScore ? Number(row.cvssScore) : null,
+      cvssScore: normalizeCvssScore(row.cvssScore),
       status: row.av.status,
       businessPriority: toUiBusinessPriority(row.av.businessPriority),
       riskScore: row.av.riskScore,
@@ -379,10 +381,6 @@ const lifecycleLabels: Record<string, string> = {
   task_linked: "Remediation linked",
   task_completed: "Remediation completed",
 };
-
-function isOutdoorGab(exposure: string | null | undefined) {
-  return /outdoor/i.test(exposure ?? "");
-}
 
 function compactJoin(parts: Array<string | null | undefined>) {
   return parts.filter(Boolean).join(", ");
@@ -470,7 +468,6 @@ export async function getAssetVulnerabilityDetail(
     evidenceRows,
     eventRows,
     relatedRows,
-    sameRiskRows,
     taskRows,
     alertRows,
     sourceRows,
@@ -549,24 +546,6 @@ export async function getAssetVulnerabilityDetail(
         )
         .orderBy(desc(assetVulnerabilities.riskScore))
         .limit(6),
-      db
-        .select({
-          av: assetVulnerabilities,
-          asset: assets,
-          cve: cves,
-        })
-        .from(assetVulnerabilities)
-        .innerJoin(assets, eq(assetVulnerabilities.assetId, assets.id))
-        .innerJoin(cves, eq(assetVulnerabilities.cveId, cves.id))
-        .where(
-          and(
-            eq(assetVulnerabilities.organizationId, organizationId),
-            eq(assetVulnerabilities.riskScore, row.av.riskScore),
-            ne(assetVulnerabilities.id, assetVulnerabilityId)
-          )
-        )
-        .orderBy(desc(assetVulnerabilities.lastSeen))
-        .limit(5),
       db
         .select({
           task: remediationTasks,
@@ -709,7 +688,7 @@ export async function getAssetVulnerabilityDetail(
         rankRow.epssScore;
       const rank = calculateRankV2({
         severity: rankRow.cve.severity,
-        cvssScore: rankRow.cve.cvssScore ? Number(rankRow.cve.cvssScore) : null,
+        cvssScore: normalizeCvssScore(rankRow.cve.cvssScore),
         exploitMaturity: rankRow.cve.exploitMaturity,
         knownExploitation: Boolean(rankRow.hasCisaKevSource),
         epssScore: rankEpssScore,
@@ -740,7 +719,7 @@ export async function getAssetVulnerabilityDetail(
       ? rankedRows[currentRankIndex].rank
       : calculateRankV2({
           severity: row.cve.severity,
-          cvssScore: row.cve.cvssScore ? Number(row.cve.cvssScore) : null,
+          cvssScore: normalizeCvssScore(row.cve.cvssScore),
           exploitMaturity: row.cve.exploitMaturity,
           knownExploitation: hasCisaKevSource,
           epssScore,
@@ -1270,7 +1249,7 @@ export async function getAssetVulnerabilityDetail(
       title: row.cve.title,
       description: row.cve.description ?? "",
       severity: toUiSeverity(row.cve.severity),
-      cvssScore: row.cve.cvssScore ? Number(row.cve.cvssScore) : 0,
+      cvssScore: normalizeCvssScore(row.cve.cvssScore),
       cvssVector: row.cve.cvssVector ?? "—",
       status: toUiVulnerabilityStatus(row.av.status),
       statusDb: row.av.status,
@@ -1561,6 +1540,23 @@ export async function updateAssetVulnerabilityStatus(input: {
     )
     .returning();
 
+  await recalculateRankV2ForAssetVulnerabilities({
+    organizationId: input.organizationId,
+    assetVulnerabilityIds: [input.id],
+  });
+
+  const [rankedRow] = await db
+    .select()
+    .from(assetVulnerabilities)
+    .where(
+      and(
+        eq(assetVulnerabilities.organizationId, input.organizationId),
+        eq(assetVulnerabilities.id, input.id)
+      )
+    )
+    .limit(1);
+  const effectiveRow = rankedRow ?? row;
+
   await db
     .update(alerts)
     .set({
@@ -1590,9 +1586,9 @@ export async function updateAssetVulnerabilityStatus(input: {
     assetVulnerabilityId: input.id,
     eventType: "status_changed",
     beforeStatus: current.status,
-    afterStatus: row.status,
-    riskScore: row.riskScore,
-    businessPriority: row.businessPriority,
+    afterStatus: effectiveRow.status,
+    riskScore: effectiveRow.riskScore,
+    businessPriority: effectiveRow.businessPriority,
     actorProfileId: input.actorProfileId ?? null,
     note: input.note ?? null,
     details: {
@@ -1601,5 +1597,5 @@ export async function updateAssetVulnerabilityStatus(input: {
     },
   });
 
-  return row;
+  return effectiveRow;
 }

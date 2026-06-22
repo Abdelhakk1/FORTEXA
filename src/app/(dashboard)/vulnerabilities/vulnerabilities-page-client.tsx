@@ -679,7 +679,7 @@ export default function VulnerabilitiesPageClient({
             </div>
             {viewMode !== "asset" ? (
               <p className="hidden text-xs font-medium text-[#6B7280] dark:text-[#94A3B8] sm:block">
-                Fix #1 is the recommended first remediation {viewMode === "campaign" ? "campaign" : "record"}
+                Fix #1 is the highest deterministic Rank v2 {viewMode === "campaign" ? "campaign" : "record"}
               </p>
             ) : null}
             <DropdownMenu>
@@ -767,7 +767,7 @@ export default function VulnerabilitiesPageClient({
                       <CampaignMetricChip emphasis>{pluralize(vulnerability.cveCount, "CVE")}</CampaignMetricChip>
                       <CampaignMetricChip>{pluralize(vulnerability.affectedAssetsCount, "GAB")}</CampaignMetricChip>
                       <CampaignMetricChip>{vulnerability.exposureSummary}</CampaignMetricChip>
-                      <CampaignMetricChip>Score {vulnerability.rankScore}</CampaignMetricChip>
+                      <CampaignMetricChip>Rank v2 {vulnerability.rankScore}</CampaignMetricChip>
                       {vulnerability.hasCisaKevSource ? <CampaignMetricChip>KEV</CampaignMetricChip> : null}
                     </div>
                   ) : null}
@@ -915,16 +915,16 @@ export default function VulnerabilitiesPageClient({
                           </div>
                           <p className={`${isCampaign ? "max-w-[520px]" : "max-w-[300px] truncate"} text-xs leading-5 text-[#6B7280] dark:text-[#64748B]`}>{rowSubtitle}</p>
                           <p className={`mt-0.5 ${isCampaign ? "max-w-[520px]" : "max-w-[300px] truncate"} text-[11px] leading-5 text-[#6B7280] dark:text-[#94A3B8]`}>
-                            {isCampaign
-                              ? `${vulnerability.groupedCvesText}`
-                              : `${vulnerability.gabExposureType ?? "GAB exposure unknown"} · ${vulnerability.rankBucket ?? "Routine"} · score ${vulnerability.rankScore ?? vulnerability.riskScore ?? "pending"}`}
+	                            {isCampaign
+	                              ? vulnerability.groupedCvesPreview
+	                              : `${vulnerability.gabExposureType ?? "GAB exposure unknown"} · ${vulnerability.rankBucket ?? "Routine"} · score ${vulnerability.rankScore ?? vulnerability.riskScore ?? "pending"}`}
                           </p>
                           {isCampaign ? (
                             <div className="mt-2 flex max-w-[560px] flex-wrap gap-1.5">
                               <CampaignMetricChip emphasis>{pluralize(vulnerability.cveCount, "CVE")}</CampaignMetricChip>
                               <CampaignMetricChip>{pluralize(vulnerability.affectedAssetsCount, "GAB")}</CampaignMetricChip>
                               <CampaignMetricChip>{vulnerability.exposureSummary}</CampaignMetricChip>
-                              <CampaignMetricChip>Score {vulnerability.rankScore}</CampaignMetricChip>
+                              <CampaignMetricChip>Rank v2 {vulnerability.rankScore}</CampaignMetricChip>
                             </div>
                           ) : vulnerability.tieBreakReason ? (
                             <p className="mt-0.5 max-w-[300px] truncate text-[11px] text-[#6B7280] dark:text-[#94A3B8]">

@@ -1,12 +1,12 @@
-# Graph Report - FORTEXA  (2026-06-08)
+# Graph Report - FORTEXA  (2026-06-22)
 
 ## Corpus Check
-- 211 files · ~125,053 words
+- 214 files · ~129,375 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 981 nodes · 1744 edges · 26 communities detected
-- Extraction: 70% EXTRACTED · 30% INFERRED · 0% AMBIGUOUS · INFERRED: 519 edges (avg confidence: 0.8)
+- 1003 nodes · 1809 edges · 28 communities detected
+- Extraction: 70% EXTRACTED · 30% INFERRED · 0% AMBIGUOUS · INFERRED: 550 edges (avg confidence: 0.8)
 - Token cost: 0 input · 0 output
 
 ## Community Hubs (Navigation)
@@ -25,28 +25,30 @@
 - [[_COMMUNITY_Community 12|Community 12]]
 - [[_COMMUNITY_Community 13|Community 13]]
 - [[_COMMUNITY_Community 14|Community 14]]
+- [[_COMMUNITY_Community 15|Community 15]]
 - [[_COMMUNITY_Community 16|Community 16]]
-- [[_COMMUNITY_Community 17|Community 17]]
-- [[_COMMUNITY_Community 22|Community 22]]
-- [[_COMMUNITY_Community 23|Community 23]]
-- [[_COMMUNITY_Community 27|Community 27]]
-- [[_COMMUNITY_Community 31|Community 31]]
-- [[_COMMUNITY_Community 32|Community 32]]
+- [[_COMMUNITY_Community 18|Community 18]]
+- [[_COMMUNITY_Community 19|Community 19]]
+- [[_COMMUNITY_Community 24|Community 24]]
+- [[_COMMUNITY_Community 25|Community 25]]
+- [[_COMMUNITY_Community 29|Community 29]]
+- [[_COMMUNITY_Community 30|Community 30]]
 - [[_COMMUNITY_Community 34|Community 34]]
-- [[_COMMUNITY_Community 38|Community 38]]
-- [[_COMMUNITY_Community 45|Community 45]]
-- [[_COMMUNITY_Community 46|Community 46]]
+- [[_COMMUNITY_Community 36|Community 36]]
+- [[_COMMUNITY_Community 40|Community 40]]
+- [[_COMMUNITY_Community 47|Community 47]]
+- [[_COMMUNITY_Community 48|Community 48]]
 
 ## God Nodes (most connected - your core abstractions)
-1. `getDb()` - 99 edges
-2. `ok()` - 34 edges
-3. `processScanImport()` - 29 edges
-4. `measureServerTiming()` - 27 edges
-5. `GET()` - 26 edges
-6. `Boolean()` - 26 edges
+1. `getDb()` - 102 edges
+2. `ok()` - 35 edges
+3. `processScanImport()` - 31 edges
+4. `GET()` - 30 edges
+5. `Boolean()` - 30 edges
+6. `measureServerTiming()` - 27 edges
 7. `toActionResult()` - 24 edges
-8. `logAuditEvent()` - 22 edges
-9. `getAssetVulnerabilityDetail()` - 22 edges
+8. `getAssetVulnerabilityDetail()` - 24 edges
+9. `logAuditEvent()` - 22 edges
 10. `importAssetsFromCsv()` - 22 edges
 
 ## Surprising Connections (you probably didn't know these)
@@ -69,24 +71,24 @@
 ## Communities
 
 ### Community 0 - "Community 0"
-Cohesion: 0.05
-Nodes (75): createSupabaseAdminClient(), acknowledgeAllNewAlerts(), listRecentAlertActivity(), updateAlertStatus(), inferAssetContext(), metadataText(), normalize(), resolveAssetVulnerabilityIdFromRoute() (+67 more)
+Cohesion: 0.07
+Nodes (57): resolveAssetVulnerabilityIdFromRoute(), getDb(), saveOnboardingWorkspaceAction(), completeOrganizationOnboarding(), createOrganizationForUser(), defaultSettingsValues(), deriveLegacyContext(), ensureAdministratorRole() (+49 more)
 
 ### Community 1 - "Community 1"
-Cohesion: 0.07
-Nodes (60): retryCveEnrichmentAction(), acceptOrganizationInviteAction(), getRequestAuditContext(), logAuditEvent(), completeOnboardingAction(), saveOnboardingEnvironmentAction(), saveOnboardingRemediationPolicyAction(), saveOnboardingWorkspaceAction() (+52 more)
+Cohesion: 0.09
+Nodes (54): updateAssetVulnerabilityStatus(), buildAssetBusinessContext(), buildAssetWhere(), applicationProfileExplanation(), applicationProfileRank(), businessPriorityLabel(), businessRankV2(), calculateApplicationProfile() (+46 more)
 
 ### Community 2 - "Community 2"
-Cohesion: 0.05
-Nodes (38): buildAlertWhere(), listAlerts(), buildReadableSignalList(), buildWhere(), compactJoin(), listAssetVulnerabilities(), updateAssetVulnerabilityStatus(), listAssets() (+30 more)
+Cohesion: 0.09
+Nodes (50): checkAiGenerationBudget(), getAiBudgetLimits(), startOfUtcDay(), aggregateAssetVulnerabilityScannerEvidence(), buildAssetVulnerabilityPlaybookPrompt(), buildInputHash(), buildRankPeerContext(), calculateEvidenceBasedPlaybookTrust() (+42 more)
 
 ### Community 3 - "Community 3"
-Cohesion: 0.1
-Nodes (53): getAssetVulnerabilityDetail(), buildAssetVulnerabilityPlaybookPrompt(), buildAssetBusinessContext(), buildAssetWhere(), applicationProfileExplanation(), applicationProfileRank(), businessPriorityLabel(), businessRankV2() (+45 more)
+Cohesion: 0.08
+Nodes (52): applyAssetClassificationRulesToUnknownAssets(), classifyAssetByRules(), listAssetClassificationRules(), asArray(), asText(), buildRawEvidence(), buildSlaDueDate(), buildSlaStatus() (+44 more)
 
 ### Community 4 - "Community 4"
-Cohesion: 0.09
-Nodes (47): asArray(), asText(), buildRawEvidence(), buildSlaDueDate(), buildSlaStatus(), createAssetCodeGenerator(), createFindingAlerts(), createImportFailureAlert() (+39 more)
+Cohesion: 0.05
+Nodes (38): acknowledgeAllNewAlerts(), buildAlertWhere(), listAlerts(), listRecentAlertActivity(), updateAlertStatus(), buildWhere(), listAssetVulnerabilities(), listAssets() (+30 more)
 
 ### Community 5 - "Community 5"
 Cohesion: 0.04
@@ -97,107 +99,115 @@ Cohesion: 0.06
 Nodes (35): acknowledgeAlertAction(), acknowledgeAllAlertsAction(), dismissAlertAction(), resolveAlertAction(), enableAiPlaybooksAction(), logActionException(), logAuditEventSafe(), retryAssetVulnerabilityEnrichmentAction() (+27 more)
 
 ### Community 7 - "Community 7"
-Cohesion: 0.1
-Nodes (43): aggregateAssetVulnerabilityScannerEvidence(), buildInputHash(), buildRankPeerContext(), calculateEvidenceBasedPlaybookTrust(), compact(), compactList(), compactRequired(), getEvidenceDedupeKey() (+35 more)
+Cohesion: 0.13
+Nodes (37): retryCveEnrichmentAction(), acceptOrganizationInviteAction(), getRequestAuditContext(), logAuditEvent(), completeOnboardingAction(), saveOnboardingEnvironmentAction(), saveOnboardingRemediationPolicyAction(), seedSampleAssetsAction() (+29 more)
 
 ### Community 8 - "Community 8"
 Cohesion: 0.1
 Nodes (39): buildDigitalOceanGradientChatPayload(), buildDigitalOceanGradientRequestPayload(), buildNormalizedError(), citationKindFromUnknown(), citationsFromUnknown(), cleanNullableText(), cleanText(), confidenceFromUnknown() (+31 more)
 
 ### Community 9 - "Community 9"
-Cohesion: 0.07
-Nodes (18): runRlsPolicyChecks(), getProtectedAreaLiveToken(), toLiveScope(), checkRateLimit(), cleanup(), getRateLimitRetryAfterSeconds(), buildRemediationCampaignSignature(), compactTitle() (+10 more)
+Cohesion: 0.08
+Nodes (28): mapAlertRow(), buildReadableSignalList(), compactJoin(), getAssetVulnerabilityDetail(), summarizeExposureByAsset(), formatPriorityFactorSummary(), prioritySummaryFromFactors(), simplifyGabExposureText() (+20 more)
 
 ### Community 10 - "Community 10"
-Cohesion: 0.09
-Nodes (21): mapAlertRow(), ScanImportDetailPage(), createScanImportRecord(), getScanImportDetail(), listScanImportAiEnrichmentSummaries(), mapScanImportRow(), normalizeScanImportErrorDetails(), toStringList() (+13 more)
+Cohesion: 0.07
+Nodes (19): runRlsPolicyChecks(), getProtectedAreaLiveToken(), toLiveScope(), checkRateLimit(), cleanup(), getRateLimitRetryAfterSeconds(), buildRemediationCampaignSignature(), compactTitle() (+11 more)
 
 ### Community 11 - "Community 11"
-Cohesion: 0.26
-Nodes (21): arrayOfRecords(), buildScannerPluginTrustedSources(), cleanText(), dedupeTrustedSourceCandidates(), extractEpssScoreFromSource(), extractNvdCvssFacts(), fetchCisaKevTrustedSource(), fetchEpssTrustedSource() (+13 more)
+Cohesion: 0.14
+Nodes (20): inferAssetContext(), metadataText(), normalize(), createAsset(), getAssetDetail(), mapAssets(), updateAssetBusinessContext(), ensureAtmPaymentServicesApplication() (+12 more)
 
 ### Community 12 - "Community 12"
+Cohesion: 0.25
+Nodes (20): arrayOfRecords(), cleanText(), dedupeTrustedSourceCandidates(), extractEpssScoreFromSource(), extractNvdCvssFacts(), fetchCisaKevTrustedSource(), fetchEpssTrustedSource(), fetchJson() (+12 more)
+
+### Community 13 - "Community 13"
 Cohesion: 0.13
 Nodes (9): collectBackground(), navigateAndSample(), createConfirmedUser(), findRoleId(), createSupabaseAdminClient(), ensureSmokeUser(), findAuthUserByEmail(), getRequiredEnv() (+1 more)
 
-### Community 13 - "Community 13"
-Cohesion: 0.12
+### Community 14 - "Community 14"
+Cohesion: 0.1
 Nodes (7): AssetDetailClient(), DashboardCharts(), getPreferredTheme(), getSnapshot(), useTheme(), Topbar(), VulnerabilitiesPageClient()
 
-### Community 14 - "Community 14"
+### Community 15 - "Community 15"
+Cohesion: 0.18
+Nodes (16): createSupabaseAdminClient(), asRows(), buildExecutiveExposureReport(), buildRemediationBacklogReport(), buildReport(), buildScanDeltaReport(), buildStoragePath(), createReportDownloadUrl() (+8 more)
+
+### Community 16 - "Community 16"
 Cohesion: 0.2
 Nodes (11): assertRequiredEnv(), collectStoragePaths(), columnExists(), countAiCveRecommendedControls(), countRows(), existingTables(), fail(), qualifiedTable() (+3 more)
 
-### Community 16 - "Community 16"
+### Community 18 - "Community 18"
 Cohesion: 0.31
 Nodes (10): emailLooksValid(), focusInput(), handleMfaChange(), handleMfaKeyDown(), handleMfaStep(), handlePasswordStep(), handleSignUp(), handleSubmit() (+2 more)
 
-### Community 17 - "Community 17"
+### Community 19 - "Community 19"
 Cohesion: 0.26
 Nodes (11): dispatchOrganizationNotification(), listRecipients(), readBoolean(), shouldSendNotification(), buildTeamInviteEmail(), escapeHtml(), getResendClient(), hasResendEmailConfig() (+3 more)
 
-### Community 22 - "Community 22"
+### Community 24 - "Community 24"
 Cohesion: 0.29
 Nodes (4): downloadCsv(), exportQueue(), openTask(), toTaskFormState()
 
-### Community 23 - "Community 23"
+### Community 25 - "Community 25"
 Cohesion: 0.38
 Nodes (3): createCookieHeader(), createEphemeralUser(), getRequiredEnv()
 
-### Community 27 - "Community 27"
+### Community 29 - "Community 29"
 Cohesion: 0.7
 Nodes (4): createCookieHeader(), createEphemeralCredentials(), getCredentials(), getRequiredEnv()
 
-### Community 31 - "Community 31"
-Cohesion: 0.83
-Nodes (3): createCookieHeader(), createEphemeralUser(), getRequiredEnv()
-
-### Community 32 - "Community 32"
-Cohesion: 0.67
+### Community 30 - "Community 30"
+Cohesion: 0.5
 Nodes (2): handleDrop(), submitFile()
 
 ### Community 34 - "Community 34"
+Cohesion: 0.83
+Nodes (3): createCookieHeader(), createEphemeralUser(), getRequiredEnv()
+
+### Community 36 - "Community 36"
 Cohesion: 0.5
 Nodes (2): Badge(), cn()
 
-### Community 38 - "Community 38"
+### Community 40 - "Community 40"
 Cohesion: 1.0
 Nodes (2): addInngestBreadcrumb(), readString()
 
-### Community 45 - "Community 45"
+### Community 47 - "Community 47"
 Cohesion: 1.0
 Nodes (2): getAiPlaybookStateMessage(), getAssetVulnerabilityBannerMessage()
 
-### Community 46 - "Community 46"
+### Community 48 - "Community 48"
 Cohesion: 0.67
 Nodes (3): Next.js Agent Rules, Next.js Dist Docs, AGENTS.md Reference
 
 ## Knowledge Gaps
 - **23 isolated node(s):** `Dashboard Brand`, `Style Foundations`, `Guideline Authoring Workflow`, `Disabled Importers`, `Canonical Importer Rationale` (+18 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **Thin community `Community 32`** (4 nodes): `aiEnrichmentLabel()`, `handleDrop()`, `submitFile()`, `scan-import-page-client.tsx`
+- **Thin community `Community 30`** (5 nodes): `aiEnrichmentLabel()`, `handleDrop()`, `importStatusLabel()`, `submitFile()`, `scan-import-page-client.tsx`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 34`** (4 nodes): `Badge()`, `badge.tsx`, `utils.ts`, `cn()`
+- **Thin community `Community 36`** (4 nodes): `Badge()`, `badge.tsx`, `utils.ts`, `cn()`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 38`** (3 nodes): `addInngestBreadcrumb()`, `readString()`, `functions.ts`
+- **Thin community `Community 40`** (3 nodes): `addInngestBreadcrumb()`, `readString()`, `functions.ts`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 45`** (3 nodes): `getAiPlaybookStateMessage()`, `getAssetVulnerabilityBannerMessage()`, `asset-vulnerability-ai-state.ts`
+- **Thin community `Community 47`** (3 nodes): `getAiPlaybookStateMessage()`, `getAssetVulnerabilityBannerMessage()`, `asset-vulnerability-ai-state.ts`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `getDb()` connect `Community 0` to `Community 1`, `Community 2`, `Community 3`, `Community 4`, `Community 6`, `Community 7`, `Community 9`, `Community 10`, `Community 11`, `Community 17`?**
-  _High betweenness centrality (0.174) - this node is a cross-community bridge._
-- **Why does `GET()` connect `Community 9` to `Community 0`, `Community 1`, `Community 2`, `Community 3`, `Community 4`, `Community 10`, `Community 11`, `Community 14`?**
-  _High betweenness centrality (0.068) - this node is a cross-community bridge._
-- **Why does `Boolean()` connect `Community 7` to `Community 3`, `Community 4`, `Community 8`, `Community 10`, `Community 11`, `Community 13`, `Community 17`?**
-  _High betweenness centrality (0.059) - this node is a cross-community bridge._
-- **Are the 98 inferred relationships involving `getDb()` (e.g. with `main()` and `logAuditEvent()`) actually correct?**
-  _`getDb()` has 98 INFERRED edges - model-reasoned connections that need verification._
-- **Are the 33 inferred relationships involving `ok()` (e.g. with `generateReportAction()` and `createReportDownloadUrlAction()`) actually correct?**
-  _`ok()` has 33 INFERRED edges - model-reasoned connections that need verification._
-- **Are the 12 inferred relationships involving `processScanImport()` (e.g. with `getDb()` and `getFortexaStorageBuckets()`) actually correct?**
-  _`processScanImport()` has 12 INFERRED edges - model-reasoned connections that need verification._
-- **Are the 25 inferred relationships involving `measureServerTiming()` (e.g. with `createRemediationTaskAction()` and `updateRemediationStatusAction()`) actually correct?**
-  _`measureServerTiming()` has 25 INFERRED edges - model-reasoned connections that need verification._
+- **Why does `getDb()` connect `Community 0` to `Community 1`, `Community 2`, `Community 3`, `Community 4`, `Community 6`, `Community 7`, `Community 9`, `Community 10`, `Community 11`, `Community 12`, `Community 15`, `Community 19`?**
+  _High betweenness centrality (0.185) - this node is a cross-community bridge._
+- **Why does `GET()` connect `Community 10` to `Community 0`, `Community 1`, `Community 2`, `Community 3`, `Community 4`, `Community 7`, `Community 9`, `Community 11`, `Community 12`, `Community 16`?**
+  _High betweenness centrality (0.081) - this node is a cross-community bridge._
+- **Why does `Boolean()` connect `Community 2` to `Community 1`, `Community 3`, `Community 8`, `Community 9`, `Community 12`, `Community 14`, `Community 19`?**
+  _High betweenness centrality (0.071) - this node is a cross-community bridge._
+- **Are the 101 inferred relationships involving `getDb()` (e.g. with `main()` and `logAuditEvent()`) actually correct?**
+  _`getDb()` has 101 INFERRED edges - model-reasoned connections that need verification._
+- **Are the 34 inferred relationships involving `ok()` (e.g. with `generateReportAction()` and `createReportDownloadUrlAction()`) actually correct?**
+  _`ok()` has 34 INFERRED edges - model-reasoned connections that need verification._
+- **Are the 14 inferred relationships involving `processScanImport()` (e.g. with `getDb()` and `getFortexaStorageBuckets()`) actually correct?**
+  _`processScanImport()` has 14 INFERRED edges - model-reasoned connections that need verification._
+- **Are the 27 inferred relationships involving `GET()` (e.g. with `runRlsPolicyChecks()` and `getSafeRedirectPath()`) actually correct?**
+  _`GET()` has 27 INFERRED edges - model-reasoned connections that need verification._

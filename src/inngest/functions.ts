@@ -2,9 +2,18 @@ import "server-only";
 
 import * as Sentry from "@sentry/nextjs";
 import { inngest } from "./client";
-import { runAssetVulnerabilityEnrichment } from "@/lib/services/asset-vulnerability-enrichment";
-import { runCveEnrichment } from "@/lib/services/cve-enrichment";
-import { processScanImport } from "@/lib/services/ingestion";
+import {
+  processPendingAssetVulnerabilityEnrichments,
+  runAssetVulnerabilityEnrichment,
+} from "@/lib/services/asset-vulnerability-enrichment";
+import {
+  retryPendingOrFailedCveEnrichments,
+  runCveEnrichment,
+} from "@/lib/services/cve-enrichment";
+import {
+  processScanImport,
+  recoverStaleProcessingScanImports,
+} from "@/lib/services/ingestion";
 import {
   dispatchOrganizationNotification,
   type NotificationKind,
@@ -80,6 +89,10 @@ const cveEnrichmentRequested = inngest.createFunction(
     addInngestBreadcrumb("cve.enrichment.requested", event.data);
 
     const cveId = typeof event.data.cveId === "string" ? event.data.cveId : null;
+    const organizationId =
+      typeof event.data.organizationId === "string"
+        ? event.data.organizationId
+        : undefined;
 
     if (!cveId) {
       return {
@@ -91,6 +104,12 @@ const cveEnrichmentRequested = inngest.createFunction(
 
     const result = await runCveEnrichment(cveId, {
       force: Boolean(event.data.force),
+      organizationId,
+      triggerSource:
+        event.data.triggerSource === "automatic_import" ||
+        event.data.triggerSource === "manual_retry"
+          ? event.data.triggerSource
+          : "background_retry",
     });
 
     return {
@@ -211,10 +230,38 @@ const notificationDispatchRequested = inngest.createFunction(
   }
 );
 
+const aiAndImportRecoveryRequested = inngest.createFunction(
+  {
+    id: "ai-and-import-recovery-requested",
+    triggers: [{ cron: "*/15 * * * *" }],
+  },
+  async () => {
+    addInngestBreadcrumb("ai.import.recovery", {});
+
+    const [imports, cves, assetPlaybooks] = await Promise.all([
+      recoverStaleProcessingScanImports(),
+      retryPendingOrFailedCveEnrichments(5),
+      processPendingAssetVulnerabilityEnrichments({
+        limit: 3,
+        triggerSource: "background_retry",
+      }),
+    ]);
+
+    return {
+      received: true,
+      kind: "ai-import-recovery",
+      imports,
+      cves,
+      assetPlaybooks: assetPlaybooks.ok ? assetPlaybooks.data : assetPlaybooks.message,
+    };
+  }
+);
+
 export const inngestFunctions = [
   scanImportRequested,
   cveEnrichmentRequested,
   assetVulnerabilityEnrichmentRequested,
   remediationSlaRefreshRequested,
   notificationDispatchRequested,
+  aiAndImportRecoveryRequested,
 ];
