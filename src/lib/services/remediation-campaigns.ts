@@ -48,11 +48,24 @@ function extractMicrosoftKb(value: string) {
   return id ? `KB${id}` : null;
 }
 
+function kbDisplayTitle(kbId: string, value: string) {
+  const title = value
+    .replace(new RegExp(`^${kbId}\\s*:\\s*`, "i"), "")
+    .replace(/\s*\([^)]*\)\s*$/, "")
+    .replace(/\bVersion\s+\d+\b/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return `${kbId} — ${compactTitle(title) ?? "Windows Security Update"}`;
+}
+
 export function formatCvePreview(cveIds: string[], limit = 5) {
   const shown = cveIds.slice(0, limit).join(", ");
   const hidden = cveIds.length - limit;
 
-  return hidden > 0 ? `${shown} +${hidden} other CVEs` : shown;
+  return hidden > 0
+    ? `${shown} +${hidden} other CVE${hidden === 1 ? "" : "s"}`
+    : shown;
 }
 
 function compactTitle(value: string | null | undefined) {
@@ -109,9 +122,11 @@ export function buildRemediationCampaignSignature(input: {
   );
 
   if (kbId) {
+    const sourceTitle = input.scannerFindingTitle ?? input.cveTitle ?? "";
+
     return {
       key: `campaign:kb:${kbId.toLowerCase()}`,
-      title: `${kbId} remediation campaign`,
+      title: `${kbDisplayTitle(kbId, sourceTitle)} remediation campaign`,
       basis: "kb",
       rationale: `same Microsoft ${kbId} update`,
     };

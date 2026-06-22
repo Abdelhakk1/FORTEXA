@@ -71,6 +71,10 @@ test("Windows KB findings group by exact KB identifier", () => {
 
   assert.equal(left.key, right.key);
   assert.equal(left.basis, "kb");
+  assert.equal(
+    left.title,
+    "KB5066836 — Windows 10 / Windows Server 2016 Security Update remediation campaign"
+  );
   assert.notEqual(left.key, other.key);
 });
 
@@ -92,11 +96,19 @@ test("same SSL RC4 plugin and remediation share one campaign signature", () => {
 });
 
 test("large CVE lists are previewed without dropping the full list", () => {
+  const sixCves = Array.from(
+    { length: 6 },
+    (_, index) => `CVE-2025-${String(index + 1).padStart(4, "0")}`
+  );
   const cves = Array.from(
     { length: 74 },
     (_, index) => `CVE-2025-${String(index + 1).padStart(4, "0")}`
   );
 
+  assert.equal(
+    formatCvePreview(sixCves),
+    "CVE-2025-0001, CVE-2025-0002, CVE-2025-0003, CVE-2025-0004, CVE-2025-0005 +1 other CVE"
+  );
   assert.equal(
     formatCvePreview(cves),
     "CVE-2025-0001, CVE-2025-0002, CVE-2025-0003, CVE-2025-0004, CVE-2025-0005 +69 other CVEs"

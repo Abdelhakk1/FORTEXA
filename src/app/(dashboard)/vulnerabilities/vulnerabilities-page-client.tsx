@@ -766,6 +766,7 @@ export default function VulnerabilitiesPageClient({
                     <div className="mt-4 flex flex-wrap gap-2">
                       <CampaignMetricChip emphasis>{pluralize(vulnerability.cveCount, "CVE")}</CampaignMetricChip>
                       <CampaignMetricChip>{pluralize(vulnerability.affectedAssetsCount, "GAB")}</CampaignMetricChip>
+                      <CampaignMetricChip>{pluralize(vulnerability.findingCount, "grouped record")}</CampaignMetricChip>
                       <CampaignMetricChip>{vulnerability.exposureSummary}</CampaignMetricChip>
                       <CampaignMetricChip>Rank v2 {vulnerability.rankScore}</CampaignMetricChip>
                       {vulnerability.hasCisaKevSource ? <CampaignMetricChip>KEV</CampaignMetricChip> : null}
@@ -923,6 +924,7 @@ export default function VulnerabilitiesPageClient({
                             <div className="mt-2 flex max-w-[560px] flex-wrap gap-1.5">
                               <CampaignMetricChip emphasis>{pluralize(vulnerability.cveCount, "CVE")}</CampaignMetricChip>
                               <CampaignMetricChip>{pluralize(vulnerability.affectedAssetsCount, "GAB")}</CampaignMetricChip>
+                              <CampaignMetricChip>{pluralize(vulnerability.findingCount, "grouped record")}</CampaignMetricChip>
                               <CampaignMetricChip>{vulnerability.exposureSummary}</CampaignMetricChip>
                               <CampaignMetricChip>Rank v2 {vulnerability.rankScore}</CampaignMetricChip>
                             </div>
@@ -939,7 +941,7 @@ export default function VulnerabilitiesPageClient({
                             {isCampaign ? (
                               <div className="space-y-1 whitespace-nowrap">
                                 <p>{vulnerability.affectedAssetsCount} GAB{vulnerability.affectedAssetsCount === 1 ? "" : "s"}</p>
-                                <p className="text-[11px] font-medium text-[#6B7280] dark:text-[#94A3B8]">{vulnerability.findingCount} finding{vulnerability.findingCount === 1 ? "" : "s"}</p>
+                                <p className="text-[11px] font-medium text-[#6B7280] dark:text-[#94A3B8]" title="Raw scanner evidence is preserved; this row groups records with the same remediation path.">{vulnerability.findingCount} grouped record{vulnerability.findingCount === 1 ? "" : "s"}</p>
                               </div>
                             ) : (
                               vulnerability.affectedAssetsCount

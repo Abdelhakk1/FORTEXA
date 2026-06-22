@@ -24,6 +24,7 @@ import {
   formatPriorityFactorSummary,
   getRankV2SlaState,
   normalizeCvssScore,
+  normalizeSeverity,
   prioritySummaryFromFactors,
   simplifyGabExposureText,
 } from "./business-priority";
@@ -145,6 +146,7 @@ export interface AssetVulnerabilityDetailData {
       business: number;
       urgency: number;
     };
+    severitySource: string;
     slaState: {
       state: string;
       label: string;
@@ -173,6 +175,7 @@ export interface AssetVulnerabilityDetailData {
     } | null;
     remediationCampaign: {
       title: string;
+      scannerTitle: string;
       rankPosition: number;
       totalCampaigns: number;
       priorityBucket: string;
@@ -1067,6 +1070,7 @@ export async function getAssetVulnerabilityDetail(
     currentCampaignGroup && currentCampaignGroup.rows.length > 1 && currentCampaignTop
       ? {
           title: currentCampaignGroup.signature.title,
+          scannerTitle: currentCampaignTop.cve.title,
           rankPosition: currentCampaignRankPosition,
           totalCampaigns: sortedCampaignGroups.length || 1,
           priorityBucket: currentCampaignTop.rank.bucketLabel,
@@ -1091,7 +1095,7 @@ export async function getAssetVulnerabilityDetail(
             currentCampaignGroup.rows.map((ranked) => ranked.cve.cveId)
           ).sort().join(", ")} across ${uniqueReasons(
             currentCampaignGroup.rows.map((ranked) => ranked.asset.assetCode)
-          ).sort().join(", ")}. These findings should be remediated together as one campaign.`,
+          ).sort().join(", ")}. These grouped records should be remediated together as one campaign.`,
           rationale:
             currentCampaignGroup.signature.basis === "ms17_010"
               ? "same Microsoft MS17-010 update and remediation path"
@@ -1187,7 +1191,7 @@ export async function getAssetVulnerabilityDetail(
   const groupStrengths = buildReadableSignalList(currentStrengths.slice(0, 6));
   const remediationCampaignRankedExplanation =
     remediationCampaign
-      ? `Campaign ranked #${remediationCampaign.rankPosition} of ${remediationCampaign.totalCampaigns}; highest finding #${remediationCampaign.highestFindingRankPosition} of ${remediationCampaign.totalOpenFindings} open GAB findings. The ${remediationCampaign.title} is ${remediationCampaign.priorityBucket} with score ${remediationCampaign.rankScore} because it has ${groupStrengths}. It covers ${remediationCampaign.cveIds.join(", ")} on ${remediationCampaign.affectedAssets.length} GAB${remediationCampaign.affectedAssets.length === 1 ? "" : "s"} (${remediationCampaign.exposureSummary}) and should be handled as one remediation campaign.`
+      ? `Campaign ranked #${remediationCampaign.rankPosition} of ${remediationCampaign.totalCampaigns}; highest record #${remediationCampaign.highestFindingRankPosition} of ${remediationCampaign.totalOpenFindings} open grouped records. The ${remediationCampaign.title} is ${remediationCampaign.priorityBucket} with score ${remediationCampaign.rankScore} because it has ${groupStrengths}. It covers ${remediationCampaign.cveIds.join(", ")} on ${remediationCampaign.affectedAssets.length} GAB${remediationCampaign.affectedAssets.length === 1 ? "" : "s"} (${remediationCampaign.exposureSummary}) and should be handled as one remediation campaign.`
       : null;
   const remediationCampaignWithExplanation = remediationCampaign
     ? {
@@ -1224,6 +1228,16 @@ export async function getAssetVulnerabilityDetail(
   const effectiveWhyNotHigher =
     remediationCampaignWithExplanation?.whyNotHigher ?? whyNotHigher;
   const whyThisWins = effectiveWhyBeatsSimilar;
+  const severitySource = (() => {
+    const normalized = normalizeSeverity({
+      cvssBaseScore: row.cve.cvssScore,
+      severityLabel: row.cve.severity,
+    });
+
+    return normalized.severitySource === "cvss" && normalized.cvssScore != null
+      ? `CVSS ${normalized.cvssScore}`
+      : `Nessus severity fallback (${normalized.label})`;
+  })();
 
   return {
     id: assetVulnerabilityId,
@@ -1305,13 +1319,14 @@ export async function getAssetVulnerabilityDetail(
       rankScore: currentRank.score,
       rankAlgorithmVersion: currentRank.algorithmVersion,
       rankFactors: currentRank.factorScores,
+      severitySource,
       slaState,
       explanation: remediationCampaignWithExplanation
         ? [
-            `Campaign #${remediationCampaignWithExplanation.rankPosition} of ${remediationCampaignWithExplanation.totalCampaigns} remediation campaigns; highest finding #${remediationCampaignWithExplanation.highestFindingRankPosition} of ${remediationCampaignWithExplanation.totalOpenFindings} open GAB findings.`,
+            `Campaign #${remediationCampaignWithExplanation.rankPosition} of ${remediationCampaignWithExplanation.totalCampaigns} remediation campaigns; highest record #${remediationCampaignWithExplanation.highestFindingRankPosition} of ${remediationCampaignWithExplanation.totalOpenFindings} open grouped records.`,
             `${remediationCampaignWithExplanation.priorityBucket} bucket and score ${remediationCampaignWithExplanation.rankScore}.`,
             `${remediationCampaignWithExplanation.exposureSummary} supporting ATM Payment Services.`,
-            `${toUiSeverity(row.cve.severity)} technical severity${row.cve.cvssScore ? ` with CVSS ${Number(row.cve.cvssScore)}` : ""}.`,
+            `${toUiSeverity(row.cve.severity)} technical severity from ${severitySource}.`,
             `${toUiExploitMaturity(row.cve.exploitMaturity, {
               confirmedCisaKev: hasCisaKevSource,
             })} exploit maturity.`,
@@ -1321,7 +1336,7 @@ export async function getAssetVulnerabilityDetail(
             `Ranked #${rankPosition} of ${rankedRows.length || 1} open GAB vulnerabilities by deterministic Rank v2, not by AI.`,
             `${currentRank.bucketLabel} bucket and score ${currentRank.score}.`,
             `${businessContext.gabExposureType} supporting ATM Payment Services.`,
-            `${toUiSeverity(row.cve.severity)} technical severity${row.cve.cvssScore ? ` with CVSS ${Number(row.cve.cvssScore)}` : ""}.`,
+            `${toUiSeverity(row.cve.severity)} technical severity from ${severitySource}.`,
             `${toUiExploitMaturity(row.cve.exploitMaturity, {
               confirmedCisaKev: hasCisaKevSource,
             })} exploit maturity.`,
@@ -1369,7 +1384,7 @@ export async function getAssetVulnerabilityDetail(
             ]),
         peers:
           remediationCampaignWithExplanation
-            ? `${remediationCampaignWithExplanation.totalCampaigns} remediation campaign${remediationCampaignWithExplanation.totalCampaigns === 1 ? "" : "s"} in the queue; this campaign covers ${remediationCampaignWithExplanation.openCount} open finding${remediationCampaignWithExplanation.openCount === 1 ? "" : "s"}.`
+            ? `${remediationCampaignWithExplanation.totalCampaigns} remediation campaign${remediationCampaignWithExplanation.totalCampaigns === 1 ? "" : "s"} in the queue; this campaign covers ${remediationCampaignWithExplanation.openCount} open grouped record${remediationCampaignWithExplanation.openCount === 1 ? "" : "s"}.`
           : samePriorityCount > 0
             ? `${samePriorityCount} peer${samePriorityCount === 1 ? "" : "s"} in ${currentRank.bucketLabel}; ${sameRankScoreCount} exact same-score peer${sameRankScoreCount === 1 ? "" : "s"}; #${sameScorePosition} within score ${currentRank.score}.`
             : `#${sameScorePosition} within score ${currentRank.score}.`,
