@@ -8,8 +8,8 @@ import { requireActiveOrganization, requirePermission } from "@/lib/auth";
 import { err, ok, toActionResult, type ActionResult } from "@/lib/errors";
 import { measureServerTiming } from "@/lib/observability/timing";
 import {
-  processPendingAssetVulnerabilityEnrichments,
   queueAssetVulnerabilityEnrichment,
+  runAssetVulnerabilityEnrichment,
 } from "@/lib/services/asset-vulnerability-enrichment";
 import { updateAssetVulnerabilityStatus } from "@/lib/services/asset-vulnerabilities";
 import { updateAiSettings } from "@/lib/services/organizations";
@@ -97,11 +97,13 @@ function wakeAssetVulnerabilityEnrichmentProcessor(input: {
   try {
     after(async () => {
       try {
-        const result = await processPendingAssetVulnerabilityEnrichments({
-          organizationId: input.organizationId,
-          limit: 1,
-          triggerSource: "background_retry",
-        });
+        const result = await runAssetVulnerabilityEnrichment(
+          input.assetVulnerabilityId,
+          {
+            organizationId: input.organizationId,
+            triggerSource: "background_retry",
+          }
+        );
 
         console.info("[asset-vulnerability-action]", {
           action: `${input.action}.processor_wake_finished`,
@@ -109,7 +111,7 @@ function wakeAssetVulnerabilityEnrichmentProcessor(input: {
           assetVulnerabilityId: input.assetVulnerabilityId,
           ok: result.ok,
           code: result.ok ? "ok" : result.code,
-          result: result.ok ? result.data : null,
+          result: result.ok ? result.data.status : null,
           message: result.ok ? null : result.message.slice(0, 240),
         });
       } catch (error) {
@@ -209,7 +211,7 @@ export async function retryAssetVulnerabilityEnrichmentAction(input: {
           return queued;
         }
 
-        if (queued.data.queued) {
+        if (queued.data.queued || queued.data.status === "already_queued") {
           wakeAssetVulnerabilityEnrichmentProcessor({
             action: "asset_vulnerability.retry_ai",
             organizationId: activeOrganization.organization.id,
@@ -283,7 +285,7 @@ export async function startAssetVulnerabilityEnrichmentAction(input: {
           return queued;
         }
 
-        if (queued.data.queued) {
+        if (queued.data.queued || queued.data.status === "already_queued") {
           wakeAssetVulnerabilityEnrichmentProcessor({
             action: "asset_vulnerability.auto_ai",
             organizationId: activeOrganization.organization.id,

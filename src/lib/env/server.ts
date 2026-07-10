@@ -65,7 +65,7 @@ export function normalizeBaseUrlEnv(value: string | undefined) {
 }
 
 export const defaultResendFromEmail = "Fortexa <onboarding@resend.dev>";
-export const DEFAULT_DIGITALOCEAN_GRADIENT_MODEL = "deepseek-4-flash";
+export const DEFAULT_DIGITALOCEAN_GRADIENT_MODEL = "openai-gpt-oss-20b";
 export const DEFAULT_DIGITALOCEAN_GRADIENT_BASE_URL =
   "https://inference.do-ai.run/v1";
 
@@ -128,7 +128,7 @@ export const serverEnv = {
     normalizeBaseUrlEnv(process.env.DIGITALOCEAN_GRADIENT_BASE_URL) ??
     DEFAULT_DIGITALOCEAN_GRADIENT_BASE_URL,
   digitalOceanGradientTimeoutMs:
-    readPositiveIntEnv(process.env.DIGITALOCEAN_GRADIENT_TIMEOUT_MS) ?? 30_000,
+    readPositiveIntEnv(process.env.DIGITALOCEAN_GRADIENT_TIMEOUT_MS) ?? 60_000,
   fortexaAiDailyRequestLimit:
     readPositiveIntEnv(process.env.FORTEXA_AI_DAILY_REQUEST_LIMIT) ?? 30,
   fortexaAiAutoImportCveLimit:

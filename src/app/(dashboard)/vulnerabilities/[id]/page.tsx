@@ -9,6 +9,8 @@ import AssetVulnerabilityDetailClient from "./asset-vulnerability-detail-client"
 
 type Params = Promise<{ id: string }>;
 
+export const maxDuration = 300;
+
 export default async function VulnerabilityDetailPage({
   params,
 }: {

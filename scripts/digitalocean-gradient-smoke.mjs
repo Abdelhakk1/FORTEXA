@@ -6,11 +6,11 @@ const { loadEnvConfig } = nextEnv;
 
 loadEnvConfig(process.cwd());
 
-const model = process.env.DIGITALOCEAN_GRADIENT_MODEL ?? "deepseek-4-flash";
+const model = process.env.DIGITALOCEAN_GRADIENT_MODEL ?? "openai-gpt-oss-20b";
 const baseUrl =
   process.env.DIGITALOCEAN_GRADIENT_BASE_URL ??
   "https://inference.do-ai.run/v1";
-const timeoutMs = Number.parseInt(process.env.DIGITALOCEAN_GRADIENT_TIMEOUT_MS ?? "30000", 10);
+const timeoutMs = Number.parseInt(process.env.DIGITALOCEAN_GRADIENT_TIMEOUT_MS ?? "60000", 10);
 const credentialCandidates = [
   ["model_access_key", process.env.DIGITALOCEAN_GRADIENT_MODEL_ACCESS_KEY?.trim()],
   ["legacy_api_key", process.env.DIGITALOCEAN_GRADIENT_API_KEY?.trim()],

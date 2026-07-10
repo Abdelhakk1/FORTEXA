@@ -1,0 +1,355 @@
+{
+  "communities": {
+    "0": [
+      "select_selectcontent",
+      "select_selectgroup",
+      "select_selectitem",
+      "select_selectlabel",
+      "select_selectscrolldownbutton",
+      "select_selectscrollupbutton",
+      "select_selectseparator",
+      "select_selecttrigger",
+      "select_selectvalue",
+      "src_components_ui_select_tsx"
+    ],
+    "1": [
+      "sheet_cn",
+      "sheet_sheet",
+      "sheet_sheetclose",
+      "sheet_sheetdescription",
+      "sheet_sheetportal",
+      "sheet_sheettitle",
+      "sheet_sheettrigger",
+      "src_components_ui_sheet_tsx"
+    ],
+    "2": [
+      "badges_kevbadge",
+      "badges_prioritybadge",
+      "badges_scannerbadge",
+      "badges_severitybadge",
+      "badges_slabadge",
+      "badges_statusbadge",
+      "src_components_shared_badges_tsx"
+    ],
+    "3": [
+      "dialog_cn",
+      "dialog_dialog",
+      "dialog_dialogclose",
+      "dialog_dialogportal",
+      "dialog_dialogtrigger",
+      "src_components_ui_dialog_tsx"
+    ],
+    "4": [
+      "dropdown_menu_cn",
+      "dropdown_menu_dropdownmenu",
+      "dropdown_menu_dropdownmenucheckboxitem",
+      "dropdown_menu_dropdownmenuportal",
+      "dropdown_menu_dropdownmenutrigger",
+      "src_components_ui_dropdown_menu_tsx"
+    ],
+    "5": [
+      "agents_nextjs_breaking_changes",
+      "claude_agents_reference",
+      "readme_create_next_app",
+      "readme_geist_font",
+      "readme_nextjs_project",
+      "readme_vercel_deployment"
+    ],
+    "6": [
+      "src_components_ui_table_tsx",
+      "table_cn",
+      "table_table",
+      "table_tablebody",
+      "table_tableheader"
+    ],
+    "7": [
+      "page_clearfilters",
+      "src_app_dashboard_alerts_page_tsx",
+      "src_app_dashboard_assets_page_tsx",
+      "src_app_dashboard_vulnerabilities_page_tsx"
+    ],
+    "8": [
+      "badge_badge",
+      "src_components_ui_badge_tsx",
+      "src_lib_utils_ts",
+      "utils_cn"
+    ],
+    "9": [
+      "page_handledrop",
+      "page_simulateupload",
+      "src_app_dashboard_scan_import_page_tsx"
+    ],
+    "10": [
+      "card_cardaction",
+      "card_cn",
+      "src_components_ui_card_tsx"
+    ],
+    "11": [
+      "progress_progress",
+      "progress_progresstrack",
+      "src_components_ui_progress_tsx"
+    ],
+    "12": [
+      "scroll_area_scrollarea",
+      "scroll_area_scrollbar",
+      "src_components_ui_scroll_area_tsx"
+    ],
+    "13": [
+      "avatar_avatarbadge",
+      "avatar_cn",
+      "src_components_ui_avatar_tsx"
+    ],
+    "14": [
+      "page_home",
+      "src_app_page_tsx"
+    ],
+    "15": [
+      "layout_dashboardlayout",
+      "src_app_dashboard_layout_tsx"
+    ],
+    "16": [
+      "page_assetdetailpage",
+      "src_app_dashboard_assets_id_page_tsx"
+    ],
+    "17": [
+      "page_reportspage",
+      "src_app_dashboard_reports_page_tsx"
+    ],
+    "18": [
+      "page_handlesubmit",
+      "src_app_login_page_tsx"
+    ],
+    "19": [
+      "src_components_ui_tabs_tsx",
+      "tabs_cn"
+    ],
+    "20": [
+      "label_cn",
+      "src_components_ui_label_tsx"
+    ],
+    "21": [
+      "src_components_ui_tooltip_tsx",
+      "tooltip_tooltipcontent"
+    ],
+    "22": [
+      "src_components_ui_switch_tsx",
+      "switch_switch"
+    ],
+    "23": [
+      "separator_cn",
+      "src_components_ui_separator_tsx"
+    ],
+    "24": [
+      "checkbox_checkbox",
+      "src_components_ui_checkbox_tsx"
+    ],
+    "25": [
+      "input_input",
+      "src_components_ui_input_tsx"
+    ],
+    "26": [
+      "src_components_layout_topbar_tsx",
+      "topbar_topbar"
+    ],
+    "27": [
+      "echart_echart",
+      "src_components_shared_echart_tsx"
+    ],
+    "28": [
+      "search_input_searchinput",
+      "src_components_shared_search_input_tsx"
+    ],
+    "29": [
+      "postcss_config_mjs"
+    ],
+    "30": [
+      "next_env_d_ts"
+    ],
+    "31": [
+      "eslint_config_mjs"
+    ],
+    "32": [
+      "next_config_ts"
+    ],
+    "33": [
+      "src_app_layout_tsx"
+    ],
+    "34": [
+      "src_app_dashboard_settings_page_tsx"
+    ],
+    "35": [
+      "src_app_dashboard_scan_import_id_page_tsx"
+    ],
+    "36": [
+      "src_app_dashboard_dashboard_page_tsx"
+    ],
+    "37": [
+      "src_app_dashboard_vulnerabilities_id_page_tsx"
+    ],
+    "38": [
+      "src_app_dashboard_remediation_page_tsx"
+    ],
+    "39": [
+      "src_components_ui_slider_tsx"
+    ],
+    "40": [
+      "src_components_ui_button_tsx"
+    ],
+    "41": [
+      "src_components_layout_sidebar_tsx"
+    ],
+    "42": [
+      "src_components_shared_empty_state_tsx"
+    ],
+    "43": [
+      "src_components_shared_kpi_card_tsx"
+    ],
+    "44": [
+      "src_components_shared_page_header_tsx"
+    ],
+    "45": [
+      "src_lib_types_ts"
+    ],
+    "46": [
+      "src_lib_mock_data_ts"
+    ]
+  },
+  "cohesion": {
+    "0": 0.2,
+    "1": 0.25,
+    "2": 0.29,
+    "3": 0.33,
+    "4": 0.33,
+    "5": 0.33,
+    "6": 0.4,
+    "7": 0.5,
+    "8": 0.5,
+    "9": 0.67,
+    "10": 0.67,
+    "11": 0.67,
+    "12": 0.67,
+    "13": 0.67,
+    "14": 1.0,
+    "15": 1.0,
+    "16": 1.0,
+    "17": 1.0,
+    "18": 1.0,
+    "19": 1.0,
+    "20": 1.0,
+    "21": 1.0,
+    "22": 1.0,
+    "23": 1.0,
+    "24": 1.0,
+    "25": 1.0,
+    "26": 1.0,
+    "27": 1.0,
+    "28": 1.0,
+    "29": 1.0,
+    "30": 1.0,
+    "31": 1.0,
+    "32": 1.0,
+    "33": 1.0,
+    "34": 1.0,
+    "35": 1.0,
+    "36": 1.0,
+    "37": 1.0,
+    "38": 1.0,
+    "39": 1.0,
+    "40": 1.0,
+    "41": 1.0,
+    "42": 1.0,
+    "43": 1.0,
+    "44": 1.0,
+    "45": 1.0,
+    "46": 1.0
+  },
+  "gods": [
+    {
+      "id": "readme_nextjs_project",
+      "label": "Next.js Project",
+      "degree": 4
+    },
+    {
+      "id": "page_clearfilters",
+      "label": "clearFilters()",
+      "degree": 3
+    },
+    {
+      "id": "badge_badge",
+      "label": "Badge()",
+      "degree": 2
+    },
+    {
+      "id": "utils_cn",
+      "label": "cn()",
+      "degree": 2
+    },
+    {
+      "id": "agents_nextjs_breaking_changes",
+      "label": "Next.js Breaking Changes Warning",
+      "degree": 2
+    },
+    {
+      "id": "readme_geist_font",
+      "label": "Geist Font Family",
+      "degree": 1
+    },
+    {
+      "id": "readme_vercel_deployment",
+      "label": "Vercel Deployment",
+      "degree": 1
+    },
+    {
+      "id": "readme_create_next_app",
+      "label": "create-next-app",
+      "degree": 1
+    },
+    {
+      "id": "claude_agents_reference",
+      "label": "CLAUDE.md Agent Reference",
+      "degree": 1
+    }
+  ],
+  "surprises": [
+    {
+      "source": "Next.js Breaking Changes Warning",
+      "target": "Next.js Project",
+      "source_files": [
+        "AGENTS.md",
+        "README.md"
+      ],
+      "confidence": "INFERRED",
+      "relation": "warns_about",
+      "why": "inferred connection - not explicitly stated in source; connects across different repos/directories"
+    },
+    {
+      "source": "CLAUDE.md Agent Reference",
+      "target": "Next.js Breaking Changes Warning",
+      "source_files": [
+        "CLAUDE.md",
+        "AGENTS.md"
+      ],
+      "confidence": "EXTRACTED",
+      "relation": "references",
+      "why": "connects across different repos/directories"
+    },
+    {
+      "source": "Badge()",
+      "target": "cn()",
+      "source_files": [
+        "src/components/ui/badge.tsx",
+        "src/lib/utils.ts"
+      ],
+      "confidence": "INFERRED",
+      "relation": "calls",
+      "why": "inferred connection - not explicitly stated in source"
+    }
+  ],
+  "questions": [
+    {
+      "type": "isolated_nodes",
+      "question": "What connects `Geist Font Family`, `Vercel Deployment`, `create-next-app` to the rest of the system?",
+      "why": "4 weakly-connected nodes found - possible documentation gaps or missing edges."
+    }
+  ]
+}
