@@ -7,9 +7,10 @@ interface EChartProps {
   option: echarts.EChartsOption;
   height?: string;
   className?: string;
+  ariaLabel?: string;
 }
 
-export function EChart({ option, height = "300px", className = "" }: EChartProps) {
+export function EChart({ option, height = "300px", className = "", ariaLabel }: EChartProps) {
   const chartRef = useRef<HTMLDivElement>(null);
   const chartInstance = useRef<echarts.ECharts | null>(null);
 
@@ -28,5 +29,14 @@ export function EChart({ option, height = "300px", className = "" }: EChartProps
     };
   }, [option]);
 
-  return <div ref={chartRef} style={{ height }} className={`w-full ${className}`} />;
+  return (
+    <div
+      ref={chartRef}
+      style={{ height }}
+      className={`w-full ${className}`}
+      role={ariaLabel ? "img" : undefined}
+      aria-label={ariaLabel}
+      title={ariaLabel}
+    />
+  );
 }

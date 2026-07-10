@@ -27,6 +27,7 @@ import {
 } from "@/components/shared/badges";
 import { Button } from "@/components/ui/button";
 import { seedSampleAssetsAction } from "@/actions/onboarding";
+import { formatDashboardCount } from "@/lib/dashboard-count";
 import type {
   DashboardActivityData,
   DashboardRiskData,
@@ -70,6 +71,16 @@ function SectionCard({
   );
 }
 
+function DashboardCount({ value, label }: { value: number; label: string }) {
+  const formatted = formatDashboardCount(value);
+
+  return (
+    <span title={formatted.exact} aria-label={`${formatted.exact} ${label}`}>
+      {formatted.display} {label}
+    </span>
+  );
+}
+
 export function DashboardSummarySection({
   data,
 }: {
@@ -79,6 +90,14 @@ export function DashboardSummarySection({
   const [showCharts, setShowCharts] = useState(false);
   const [isLoadingSample, startSampleLoad] = useTransition();
   const [sampleMessage, setSampleMessage] = useState<string | null>(null);
+  const counts = {
+    monitored: formatDashboardCount(data.totals.atmGabCount),
+    unclassified: formatDashboardCount(data.totals.unclassifiedGabCount),
+    vulnerabilities: formatDashboardCount(data.totals.totalVulnerabilities),
+    critical: formatDashboardCount(data.totals.criticalVulnerabilities),
+    alerts: formatDashboardCount(data.totals.openAlerts),
+    overdue: formatDashboardCount(data.totals.overdueTasks),
+  };
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
@@ -96,14 +115,16 @@ export function DashboardSummarySection({
         <KpiCard
           hero
           label="Monitored GABs"
-          value={data.totals.atmGabCount}
+          value={counts.monitored.display}
+          exactValue={counts.monitored.exact}
           change="+0 vs last month"
           changeType="neutral"
           icon={<Monitor className="h-5 w-5" />}
         />
         <KpiCard
           label="Need Classification"
-          value={data.totals.unclassifiedGabCount}
+          value={counts.unclassified.display}
+          exactValue={counts.unclassified.exact}
           change={
             data.totals.unclassifiedGabCount > 0
               ? "Set exposure context"
@@ -114,28 +135,32 @@ export function DashboardSummarySection({
         />
         <KpiCard
           label="Vulnerabilities"
-          value={`${(data.totals.totalVulnerabilities / 1000).toFixed(1)}k`}
+          value={counts.vulnerabilities.display}
+          exactValue={counts.vulnerabilities.exact}
           change="Current open exposure"
           changeType={data.totals.totalVulnerabilities > 0 ? "negative" : "neutral"}
           icon={<Bug className="h-5 w-5" />}
         />
         <KpiCard
           label="Critical CVEs"
-          value={data.totals.criticalVulnerabilities}
+          value={counts.critical.display}
+          exactValue={counts.critical.exact}
           change="Requires review"
           changeType={data.totals.criticalVulnerabilities > 0 ? "negative" : "neutral"}
           icon={<AlertTriangle className="h-5 w-5" />}
         />
         <KpiCard
           label="Open Alerts"
-          value={data.totals.openAlerts}
+          value={counts.alerts.display}
+          exactValue={counts.alerts.exact}
           change="Operational queue"
           changeType={data.totals.openAlerts > 0 ? "negative" : "positive"}
           icon={<Bell className="h-5 w-5" />}
         />
         <KpiCard
           label="Overdue Tasks"
-          value={data.totals.overdueTasks}
+          value={counts.overdue.display}
+          exactValue={counts.overdue.exact}
           change="SLA breach risk"
           changeType={data.totals.overdueTasks > 0 ? "negative" : "positive"}
           icon={<Clock className="h-5 w-5" />}
@@ -312,7 +337,10 @@ export function DashboardRiskSection({ data }: { data: DashboardRiskData }) {
                       {vulnerability.title}
                     </p>
                     <p className="mt-1 text-xs text-[#9CA3AF] dark:text-[#64748B]">
-                      {vulnerability.affectedAssetsCount} affected assets
+                      <DashboardCount
+                        value={vulnerability.affectedAssetsCount}
+                        label="affected assets"
+                      />
                     </p>
                     {vulnerability.contextReason ? (
                       <p className="mt-1 line-clamp-1 text-xs text-[#9CA3AF] dark:text-[#64748B]">
@@ -432,7 +460,11 @@ export function DashboardActivitySection({
                       {scanImport.name}
                     </p>
                     <p className="text-xs text-[#9CA3AF] dark:text-[#64748B]">
-                      {scanImport.importDate} · {scanImport.findingsFound} findings
+                      {scanImport.importDate} ·{" "}
+                      <DashboardCount
+                        value={scanImport.findingsFound}
+                        label="findings"
+                      />
                     </p>
                   </div>
                 </div>

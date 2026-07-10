@@ -32,6 +32,10 @@ function readPositiveIntEnv(value: string | undefined) {
   return parsed;
 }
 
+function readStrictBooleanEnv(value: string | undefined) {
+  return readEnv(value) === "true";
+}
+
 function readUrlEnv(value: string | undefined) {
   const trimmed = readEnv(value);
 
@@ -95,6 +99,7 @@ function buildDigitalOceanCredentialCandidates() {
 }
 
 export const serverEnv = {
+  demoMode: readStrictBooleanEnv(process.env.DEMO_MODE),
   nextPublicAppUrl: readUrlEnv(process.env.NEXT_PUBLIC_APP_URL),
   nextPublicSupabaseUrl: readEnv(process.env.NEXT_PUBLIC_SUPABASE_URL),
   nextPublicSupabaseAnonKey: readEnv(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY),

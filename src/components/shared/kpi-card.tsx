@@ -14,9 +14,14 @@ interface KpiCardProps {
   subtitle?: string;
   accentColor?: string;
   hero?: boolean;
+  exactValue?: string;
 }
 
-export function KpiCard({ label, value, change, changeType = "neutral", icon, subtitle, accentColor, hero = false }: KpiCardProps) {
+export function KpiCard({ label, value, change, changeType = "neutral", icon, subtitle, accentColor, hero = false, exactValue }: KpiCardProps) {
+  const valueAccessibility = exactValue
+    ? { title: exactValue, "aria-label": `${label}: ${exactValue}` }
+    : {};
+
   if (hero) {
     return (
       <Card className="relative p-5 rounded-2xl border-0 bg-[#0C5CAB] text-white cursor-default group overflow-hidden h-full flex flex-col justify-center">
@@ -24,7 +29,7 @@ export function KpiCard({ label, value, change, changeType = "neutral", icon, su
           <div className="flex items-center justify-center h-8 w-8 rounded-full bg-white/10 mb-1">
             {icon}
           </div>
-          <p className="text-4xl font-extrabold tracking-tight leading-none">{value}</p>
+          <p className="text-4xl font-extrabold tracking-tight leading-none" {...valueAccessibility}>{value}</p>
           <p className="text-xs font-medium text-white/80 uppercase tracking-wide">{label}</p>
 
           {change && (
@@ -52,7 +57,7 @@ export function KpiCard({ label, value, change, changeType = "neutral", icon, su
         <div className="flex items-center justify-center h-8 w-8 rounded-full bg-[#F3F4F6] dark:bg-[#1a1a22] text-[#6B7280] dark:text-[#94A3B8] mb-1">
           {icon}
         </div>
-        <p className="text-4xl font-extrabold tracking-tight text-[#1A1A2E] dark:text-[#fafafa] leading-none">{value}</p>
+        <p className="text-4xl font-extrabold tracking-tight text-[#1A1A2E] dark:text-[#fafafa] leading-none" {...valueAccessibility}>{value}</p>
         <p className="text-xs font-medium text-[#6B7280] dark:text-[#94A3B8] uppercase tracking-wide">{label}</p>
 
         {change && (

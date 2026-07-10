@@ -78,6 +78,22 @@ test("DigitalOcean maintenance HTML is retryable provider unavailability", () =>
   assert.match(failure.message, /maintenance/i);
 });
 
+test("provider overload is retryable without exposing the raw provider body", () => {
+  const failure = normalizeDigitalOceanGradientFailure(
+    new DigitalOceanGradientHttpError(
+      429,
+      "Platform overloaded. Internal capacity pool do-fra1-007 exhausted."
+    ),
+    DEFAULT_DIGITALOCEAN_GRADIENT_MODEL
+  );
+
+  assert.equal(failure.type, "rate_limited");
+  assert.equal(failure.resultCode, "service_unavailable");
+  assert.equal(failure.retryable, true);
+  assert.match(failure.message, /temporarily busy/i);
+  assert.doesNotMatch(failure.message, /capacity pool|do-fra1-007|platform overloaded/i);
+});
+
 test("malformed provider output is classified as malformed json", () => {
   const parsed = parseStructuredAssistantText({
     text: "```json\nnot-json\n```",

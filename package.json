@@ -10,6 +10,7 @@
     "db:migrate:file": "node ./scripts/apply-db-migration.mjs",
     "db:reset:dev": "node ./scripts/reset-dev-data.mjs",
     "db:reset:test": "node ./scripts/reset-test-database.mjs",
+    "db:seed:demo": "node --import tsx ./scripts/seed-demo-data.mjs",
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",

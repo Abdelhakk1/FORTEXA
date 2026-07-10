@@ -209,10 +209,7 @@ export async function retryAssetVulnerabilityEnrichmentAction(input: {
           return queued;
         }
 
-        if (
-          queued.data.queued ||
-          queued.data.status === "already_queued"
-        ) {
+        if (queued.data.queued) {
           wakeAssetVulnerabilityEnrichmentProcessor({
             action: "asset_vulnerability.retry_ai",
             organizationId: activeOrganization.organization.id,
@@ -286,10 +283,7 @@ export async function startAssetVulnerabilityEnrichmentAction(input: {
           return queued;
         }
 
-        if (
-          queued.data.queued ||
-          queued.data.status === "already_queued"
-        ) {
+        if (queued.data.queued) {
           wakeAssetVulnerabilityEnrichmentProcessor({
             action: "asset_vulnerability.auto_ai",
             organizationId: activeOrganization.organization.id,

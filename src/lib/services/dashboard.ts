@@ -42,8 +42,30 @@ export interface DashboardSummaryData {
   };
   hasOperationalData: boolean;
   severityDistribution: Array<{ name: string; value: number; color: string }>;
-  exposureTrend: Array<{ month: string; critical: number; high: number; medium: number; low: number }>;
-  remediationTrend: Array<{ month: string; opened: number; closed: number; overdue: number }>;
+  exposureTrend: DashboardExposureTrendPoint[];
+  remediationTrend: DashboardRemediationTrendPoint[];
+}
+
+export interface DashboardExposureTrendPoint {
+  scanId: string;
+  scanName: string;
+  scanDate: string;
+  month: string;
+  critical: number;
+  high: number;
+  medium: number;
+  low: number;
+  newFindings: number;
+  fixedFindings: number;
+  reopenedFindings: number;
+}
+
+export interface DashboardRemediationTrendPoint {
+  periodStart: string;
+  month: string;
+  opened: number;
+  closed: number;
+  overdue: number;
 }
 
 export interface DashboardRiskData {
@@ -76,6 +98,26 @@ type DashboardTotalsRow = {
 type SeverityRow = {
   severity: string | null;
   total: number;
+};
+
+export type DashboardScanTrendRow = {
+  id: string;
+  name: string;
+  importDate: Date | string;
+  critical: number | string | null;
+  high: number | string | null;
+  medium: number | string | null;
+  low: number | string | null;
+  newFindings: number | string | null;
+  fixedFindings: number | string | null;
+  reopenedFindings: number | string | null;
+};
+
+export type DashboardRemediationTrendRow = {
+  periodStart: Date | string;
+  opened: number | string | null;
+  closed: number | string | null;
+  overdue: number | string | null;
 };
 
 type RiskyAssetRow = {
@@ -144,23 +186,92 @@ function asRows<T>(value: unknown) {
   return value as T[];
 }
 
-function buildEmptyTrend(months: string[]) {
-  return months.map((month) => ({
-    month,
-    critical: 0,
-    high: 0,
-    medium: 0,
-    low: 0,
-  }));
+function count(value: number | string | null) {
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) ? Math.max(0, Math.trunc(parsed)) : 0;
 }
 
-function buildEmptyRemediationTrend(months: string[]) {
-  return months.map((month) => ({
-    month,
-    opened: 0,
-    closed: 0,
-    overdue: 0,
-  }));
+function validDate(value: Date | string) {
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function dateKey(date: Date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function monthKey(date: Date) {
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(
+    2,
+    "0"
+  )}-01`;
+}
+
+export function buildDashboardExposureTrend(
+  rows: DashboardScanTrendRow[]
+): DashboardExposureTrendPoint[] {
+  return rows
+    .map((row) => ({ row, date: validDate(row.importDate) }))
+    .filter(
+      (entry): entry is { row: DashboardScanTrendRow; date: Date } =>
+        entry.date !== null
+    )
+    .sort((left, right) => left.date.getTime() - right.date.getTime())
+    .slice(-6)
+    .map(({ row, date }) => ({
+      scanId: row.id,
+      scanName: row.name,
+      scanDate: date.toISOString(),
+      month: new Intl.DateTimeFormat("en-US", {
+        month: "short",
+        day: "numeric",
+        timeZone: "UTC",
+      }).format(date),
+      critical: count(row.critical),
+      high: count(row.high),
+      medium: count(row.medium),
+      low: count(row.low),
+      newFindings: count(row.newFindings),
+      fixedFindings: count(row.fixedFindings),
+      reopenedFindings: count(row.reopenedFindings),
+    }));
+}
+
+export function buildDashboardRemediationTrend(
+  rows: DashboardRemediationTrendRow[],
+  now = new Date()
+): DashboardRemediationTrendPoint[] {
+  if (rows.length === 0) {
+    return [];
+  }
+
+  const anchor = new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)
+  );
+  const rowsByMonth = new Map(
+    rows.flatMap((row) => {
+      const date = validDate(row.periodStart);
+      return date ? [[monthKey(date), row] as const] : [];
+    })
+  );
+
+  return Array.from({ length: 6 }, (_, index) => {
+    const date = new Date(
+      Date.UTC(anchor.getUTCFullYear(), anchor.getUTCMonth() - 5 + index, 1)
+    );
+    const row = rowsByMonth.get(monthKey(date));
+
+    return {
+      periodStart: dateKey(date),
+      month: new Intl.DateTimeFormat("en-US", {
+        month: "short",
+        timeZone: "UTC",
+      }).format(date),
+      opened: count(row?.opened ?? 0),
+      closed: count(row?.closed ?? 0),
+      overdue: count(row?.overdue ?? 0),
+    };
+  });
 }
 
 function buildDashboardAssetBusinessContext(asset: RiskyAssetRow) {
@@ -218,9 +329,7 @@ function buildDashboardAssetBusinessContext(asset: RiskyAssetRow) {
   };
 }
 
-function emptySummaryData(): DashboardSummaryData {
-  const monthLabels = ["Nov", "Dec", "Jan", "Feb", "Mar", "Apr"];
-
+export function emptyDashboardSummaryData(): DashboardSummaryData {
   return {
     totals: {
       totalAssets: 0,
@@ -238,8 +347,8 @@ function emptySummaryData(): DashboardSummaryData {
       { name: "Medium", value: 0, color: "#3B82F6" },
       { name: "Low", value: 0, color: "#10B981" },
     ],
-    exposureTrend: buildEmptyTrend(monthLabels),
-    remediationTrend: buildEmptyRemediationTrend(monthLabels),
+    exposureTrend: [],
+    remediationTrend: [],
   };
 }
 
@@ -263,16 +372,16 @@ export async function getDashboardSummaryData(
   const db = getDb();
 
   if (!db) {
-    return emptySummaryData();
+    return emptyDashboardSummaryData();
   }
 
   return measureServerTiming(
     "dashboard.summary",
     async () => {
-      const monthLabels = ["Nov", "Dec", "Jan", "Feb", "Mar", "Apr"];
-
-      const totalsRows = asRows<DashboardTotalsRow>(
-        await db.execute(sql`
+      const [totalsRows, severityRows, scanTrendRows, remediationTrendRows] =
+        await Promise.all([
+          asRows<DashboardTotalsRow>(
+            await db.execute(sql`
           select
             (select count(*)::int from assets where organization_id = ${organizationId}) as "totalAssets",
             (select count(*)::int from assets where organization_id = ${organizationId} and type in ('atm', 'gab')) as "atmGabCount",
@@ -285,22 +394,200 @@ export async function getDashboardSummaryData(
               where av.organization_id = ${organizationId} and av.status <> 'closed' and c.severity = 'critical'
             ) as "criticalVulnerabilities",
             (select count(*)::int from alerts where organization_id = ${organizationId} and status in ('new', 'acknowledged')) as "openAlerts",
-            (select count(*)::int from remediation_tasks where organization_id = ${organizationId} and sla_status = 'overdue') as "overdueTasks"
+            (
+              select count(*)::int
+              from remediation_tasks
+              where organization_id = ${organizationId}
+                and (
+                  sla_status = 'overdue'
+                  or status = 'overdue'
+                  or (
+                    due_date < now()
+                    and status not in ('mitigated', 'closed')
+                  )
+                )
+            ) as "overdueTasks"
         `)
-      );
-      const severityRows = asRows<SeverityRow>(
-        await db.execute(sql`
+          ),
+          asRows<SeverityRow>(
+            await db.execute(sql`
           select c.severity as severity, count(*)::int as total
           from asset_vulnerabilities av
           inner join cves c on c.id = av.cve_id
           where av.organization_id = ${organizationId} and av.status <> 'closed'
           group by c.severity
         `)
-      );
+          ),
+          asRows<DashboardScanTrendRow>(
+            await db.execute(sql`
+          with recent_scans as (
+            select
+              id,
+              name,
+              import_date,
+              new_findings,
+              fixed_findings,
+              reopened_findings
+            from scan_imports
+            where organization_id = ${organizationId}
+              and scanner_source = 'nessus'
+              and status in ('completed', 'partial')
+            order by import_date desc
+            limit 6
+          ),
+          finding_counts as (
+            select
+              sf.scan_import_id,
+              count(distinct coalesce(
+                sf.matched_asset_id::text || ':' || sf.matched_cve_id::text,
+                sf.id::text
+              )) filter (where sf.severity = 'critical')::int as critical,
+              count(distinct coalesce(
+                sf.matched_asset_id::text || ':' || sf.matched_cve_id::text,
+                sf.id::text
+              )) filter (where sf.severity = 'high')::int as high,
+              count(distinct coalesce(
+                sf.matched_asset_id::text || ':' || sf.matched_cve_id::text,
+                sf.id::text
+              )) filter (where sf.severity = 'medium')::int as medium,
+              count(distinct coalesce(
+                sf.matched_asset_id::text || ':' || sf.matched_cve_id::text,
+                sf.id::text
+              )) filter (where sf.severity = 'low')::int as low
+            from scan_findings sf
+            inner join recent_scans rs on rs.id = sf.scan_import_id
+            where sf.organization_id = ${organizationId}
+            group by sf.scan_import_id
+          ),
+          event_counts as (
+            select
+              ave.scan_import_id,
+              count(distinct ave.asset_vulnerability_id) filter (
+                where ave.event_type in ('introduced', 'unchanged', 'reopened')
+                  and c.severity = 'critical'
+              )::int as critical,
+              count(distinct ave.asset_vulnerability_id) filter (
+                where ave.event_type in ('introduced', 'unchanged', 'reopened')
+                  and c.severity = 'high'
+              )::int as high,
+              count(distinct ave.asset_vulnerability_id) filter (
+                where ave.event_type in ('introduced', 'unchanged', 'reopened')
+                  and c.severity = 'medium'
+              )::int as medium,
+              count(distinct ave.asset_vulnerability_id) filter (
+                where ave.event_type in ('introduced', 'unchanged', 'reopened')
+                  and c.severity = 'low'
+              )::int as low,
+              count(distinct ave.asset_vulnerability_id) filter (
+                where ave.event_type = 'introduced'
+              )::int as "newFindings",
+              count(distinct ave.asset_vulnerability_id) filter (
+                where ave.event_type = 'fixed'
+              )::int as "fixedFindings",
+              count(distinct ave.asset_vulnerability_id) filter (
+                where ave.event_type = 'reopened'
+              )::int as "reopenedFindings"
+            from asset_vulnerability_events ave
+            inner join recent_scans rs on rs.id = ave.scan_import_id
+            inner join asset_vulnerabilities av
+              on av.id = ave.asset_vulnerability_id
+              and av.organization_id = ${organizationId}
+            inner join cves c on c.id = av.cve_id
+            where ave.organization_id = ${organizationId}
+            group by ave.scan_import_id
+          )
+          select
+            rs.id,
+            rs.name,
+            rs.import_date as "importDate",
+            coalesce(ec.critical, fc.critical, 0)::int as critical,
+            coalesce(ec.high, fc.high, 0)::int as high,
+            coalesce(ec.medium, fc.medium, 0)::int as medium,
+            coalesce(ec.low, fc.low, 0)::int as low,
+            coalesce(ec."newFindings", rs.new_findings, 0)::int as "newFindings",
+            coalesce(ec."fixedFindings", rs.fixed_findings, 0)::int as "fixedFindings",
+            coalesce(ec."reopenedFindings", rs.reopened_findings, 0)::int as "reopenedFindings"
+          from recent_scans rs
+          left join finding_counts fc on fc.scan_import_id = rs.id
+          left join event_counts ec on ec.scan_import_id = rs.id
+          order by rs.import_date asc
+        `)
+          ),
+          asRows<DashboardRemediationTrendRow>(
+            await db.execute(sql`
+          with completion_events as (
+            select
+              details ->> 'remediationTaskId' as task_id,
+              max(created_at) as completed_at
+            from asset_vulnerability_events
+            where organization_id = ${organizationId}
+              and event_type = 'task_completed'
+              and details ->> 'remediationTaskId' is not null
+            group by details ->> 'remediationTaskId'
+          ),
+          activity as (
+            select
+              rt.id::text as task_id,
+              rt.created_at as occurred_at,
+              'opened'::text as activity_type
+            from remediation_tasks rt
+            where rt.organization_id = ${organizationId}
 
-      const totals = totalsRows[0] ?? emptySummaryData().totals;
+            union all
+
+            select
+              rt.id::text as task_id,
+              coalesce(ce.completed_at, rt.updated_at) as occurred_at,
+              'closed'::text as activity_type
+            from remediation_tasks rt
+            left join completion_events ce on ce.task_id = rt.id::text
+            where rt.organization_id = ${organizationId}
+              and rt.status in ('mitigated', 'closed')
+
+            union all
+
+            select
+              rt.id::text as task_id,
+              coalesce(rt.due_date, rt.updated_at) as occurred_at,
+              'overdue'::text as activity_type
+            from remediation_tasks rt
+            where rt.organization_id = ${organizationId}
+              and (
+                rt.status = 'overdue'
+                or rt.sla_status = 'overdue'
+                or (
+                  rt.due_date < now()
+                  and rt.status not in ('mitigated', 'closed')
+                )
+              )
+          )
+          select
+            date_trunc('month', occurred_at) as "periodStart",
+            count(distinct task_id) filter (
+              where activity_type = 'opened'
+            )::int as opened,
+            count(distinct task_id) filter (
+              where activity_type = 'closed'
+            )::int as closed,
+            count(distinct task_id) filter (
+              where activity_type = 'overdue'
+            )::int as overdue
+          from activity
+          where occurred_at >= date_trunc('month', current_date) - interval '5 months'
+            and occurred_at < date_trunc('month', current_date) + interval '1 month'
+          group by date_trunc('month', occurred_at)
+          order by date_trunc('month', occurred_at) asc
+        `)
+          ),
+        ]);
+
+      const totals = totalsRows[0] ?? emptyDashboardSummaryData().totals;
       const countsBySeverity = new Map(
         severityRows.map((row) => [row.severity ?? "info", row.total])
+      );
+      const exposureTrend = buildDashboardExposureTrend(scanTrendRows);
+      const remediationTrend = buildDashboardRemediationTrend(
+        remediationTrendRows
       );
 
       return {
@@ -308,7 +595,9 @@ export async function getDashboardSummaryData(
         hasOperationalData:
           totals.totalAssets > 0 ||
           totals.totalVulnerabilities > 0 ||
-          totals.openAlerts > 0,
+          totals.openAlerts > 0 ||
+          exposureTrend.length > 0 ||
+          remediationTrend.length > 0,
         severityDistribution: [
           {
             name: "Critical",
@@ -331,8 +620,8 @@ export async function getDashboardSummaryData(
             color: "#10B981",
           },
         ],
-        exposureTrend: buildEmptyTrend(monthLabels),
-        remediationTrend: buildEmptyRemediationTrend(monthLabels),
+        exposureTrend,
+        remediationTrend,
       };
     },
     undefined,

@@ -782,7 +782,8 @@ export function normalizeDigitalOceanGradientFailure(
       return buildNormalizedError({
         resultCode: "service_unavailable",
         type: "provider_error",
-        message: `DigitalOcean Gradient API was unavailable. ${error.bodyMessage ?? "Retry AI in a moment."}`,
+        message:
+          "DigitalOcean Gradient is temporarily unavailable for maintenance. Retry AI in a moment.",
         status,
         model,
         retryable: true,
@@ -833,7 +834,8 @@ export function normalizeDigitalOceanGradientFailure(
       return buildNormalizedError({
         resultCode: "service_unavailable",
         type: "rate_limited",
-        message: `DigitalOcean Gradient API rate limited the request. ${error.bodyMessage ?? "Retry AI in a moment."}`,
+        message:
+          "DigitalOcean Gradient is temporarily busy. Retry AI in a moment.",
         status,
         model,
         retryable: true,
@@ -844,7 +846,8 @@ export function normalizeDigitalOceanGradientFailure(
       return buildNormalizedError({
         resultCode: "service_unavailable",
         type: "provider_error",
-        message: `DigitalOcean Gradient API was unavailable. ${error.bodyMessage ?? "Retry AI in a moment."}`,
+        message:
+          "DigitalOcean Gradient is temporarily unavailable. Retry AI in a moment.",
         status,
         model,
         retryable: true,

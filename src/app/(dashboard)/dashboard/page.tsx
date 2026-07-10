@@ -3,10 +3,12 @@ import Link from "next/link";
 import { Suspense } from "react";
 import { Filter, ShieldAlert, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { PageHeader } from "@/components/shared/page-header";
 import { requireActiveOrganization, requirePermission } from "@/lib/auth";
 import { startServerTiming } from "@/lib/observability/timing";
+import { serverEnv } from "@/lib/env/server";
 import {
   getDashboardActivityData,
   getDashboardRiskData,
@@ -80,6 +82,9 @@ export default async function DashboardPage() {
   await requirePermission("dashboard.view");
   const activeOrganization = await requireActiveOrganization();
   const organizationId = activeOrganization.organization.id;
+  const demoDataActive =
+    serverEnv.demoMode ||
+    activeOrganization.organization.metadata?.fortexaDemonstrationData === true;
   timing.end({ streamed: true });
 
   return (
@@ -89,6 +94,14 @@ export default async function DashboardPage() {
         description="Live operational overview of your GAB vulnerability posture"
         actions={
           <div className="flex flex-wrap gap-2">
+            {demoDataActive ? (
+              <Badge
+                variant="outline"
+                className="h-8 rounded-full border-amber-200 bg-amber-50 px-3 text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200"
+              >
+                Demonstration data
+              </Badge>
+            ) : null}
             <Button
               className="gradient-accent border-0 text-white shadow-sm hover:shadow-md transition-shadow relative overflow-hidden group"
               asChild
